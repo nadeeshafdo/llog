@@ -401,12 +401,13 @@ func truncLine(s string, w int) string {
 	return string(r[:w-1]) + "…"
 }
 
-// fitLines truncates lines to the width and keeps at most maxRows of them,
-// replacing the last row with a counter when content is cut.
+// fitLines keeps at most maxRows rows, cutting over-wide rows with an
+// ANSI-safe truncator and replacing the tail with a counter when content
+// is cut. Rows may carry ANSI highlight codes; the counter never does.
 func fitLines(lines []string, maxRows, w int) []string {
 	out := make([]string, 0, len(lines))
 	for _, ln := range lines {
-		out = append(out, truncLine(ln, w))
+		out = append(out, truncAnsi(ln, w, "…"))
 	}
 	if len(out) <= maxRows {
 		return out
@@ -423,6 +424,29 @@ var sgrRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
 type styledCell struct {
 	r     rune
 	style string // active SGR code, "" when unstyled
+}
+
+// emitStyled renders cells, switching SGR codes only on change and always
+// resetting an open style, so output never carries redundant or dangling
+// codes even when styles were split apart by wrapping.
+func emitStyled(cells []styledCell) string {
+	var sb strings.Builder
+	prev := ""
+	for _, c := range cells {
+		if c.style != prev {
+			if c.style == "" {
+				sb.WriteString("\x1b[0m")
+			} else {
+				sb.WriteString(c.style)
+			}
+			prev = c.style
+		}
+		sb.WriteRune(c.r)
+	}
+	if prev != "" {
+		sb.WriteString("\x1b[0m")
+	}
+	return sb.String()
 }
 
 // lineCells splits a line into visible cells, tracking ANSI SGR state.
@@ -462,6 +486,41 @@ func cellWidth(r rune) int {
 	return 1
 }
 
+// truncAnsi cuts s to at most w visible cells without breaking ANSI SGR
+// sequences or splitting wide runes. A tail (e.g. "…") is appended when cut.
+func truncAnsi(s string, w int, tail string) string {
+	if w < 1 {
+		return ""
+	}
+	cells := lineCells(s)
+	width := 0
+	for _, c := range cells {
+		width += cellWidth(c.r)
+	}
+	if width <= w {
+		return s
+	}
+	tailW := 0
+	for _, r := range tail {
+		tailW += cellWidth(r)
+	}
+	limit := w - tailW
+	if limit < 0 {
+		limit = 0
+	}
+	var kept []styledCell
+	used := 0
+	for _, c := range cells {
+		cw := cellWidth(c.r)
+		if used+cw > limit {
+			break
+		}
+		kept = append(kept, c)
+		used += cw
+	}
+	return emitStyled(kept) + tail
+}
+
 // wrapLine wraps s to rows of at most w visible cells. Wrapping is
 // word-aware; words longer than w are hard-split. ANSI styles reopen after
 // every break so rows stay self-contained. Runs of spaces collapse to one
@@ -490,19 +549,7 @@ func wrapLine(s string, w int) []string {
 		return []string{""}
 	}
 	flush := func(row []styledCell) string {
-		var sb strings.Builder
-		prev := ""
-		for _, c := range row {
-			if c.style != prev {
-				sb.WriteString(c.style)
-				prev = c.style
-			}
-			sb.WriteRune(c.r)
-		}
-		if prev != "" {
-			sb.WriteString("\x1b[0m")
-		}
-		return sb.String()
+		return emitStyled(row)
 	}
 	var rows []string
 	var row []styledCell
@@ -708,8 +755,10 @@ func (m teaModel) View() string {
 	var sb strings.Builder
 	sb.WriteString(bar(titleStyle, fmt.Sprintf("llog  %s  |  Ctrl+S save  Ctrl+C discard  Up/Down history  Ctrl+F search  Ctrl+E edit  Tab fix  |  %s", m.b.nowHeader, spellTag(m.b.checker)), w) + "\n")
 	sb.WriteString(headStyle.Render(truncLine(topHead, w)) + "\n")
+	// Rows are already marked exactly once above; never mark again here,
+	// or the SGR bytes themselves get flagged as words.
 	for _, ln := range shown {
-		sb.WriteString(m.mark(ln) + "\n")
+		sb.WriteString(ln + "\n")
 	}
 	sb.WriteString(dimStyle.Render(strings.Repeat("-", w)) + "\n")
 	sb.WriteString(headStyle.Render(truncLine(bottomHead, w)) + "\n")
