@@ -23,6 +23,8 @@ const (
 	kDown
 	kLeft
 	kRight
+	kHome
+	kEnd
 	kTab
 	kCtrlA
 	kCtrlC
@@ -57,17 +59,20 @@ type editResult struct {
 type undoState struct {
 	active bool
 	snap   []rune
+	pos    int
 }
 
 // browser holds the state of the writing prompt. The draft being typed is
 // always kept; Up/Down only moves the history view, so browsing never loses
-// what was typed.
+// what was typed. pos is the cursor offset in draft, qpos in query.
 type browser struct {
 	entries   []Entry
 	topIdx    int
 	draft     []rune
+	pos       int
 	inPrompt  bool
 	query     []rune
+	qpos      int
 	inSearch  bool
 	matches   []int
 	midx      int
@@ -76,6 +81,7 @@ type browser struct {
 	editing   bool
 	editIdx   int
 	stash     []rune
+	stashPos  int
 	status    string
 	undo      undoState
 }
@@ -123,49 +129,71 @@ func (b *browser) handleEdit(k key) action {
 		}
 		b.inPrompt = true
 		b.query = nil
+		b.qpos = 0
 		return actNone
 	case kCtrlA:
 		b.addWord()
 		return actNone
 	case kUp, kDown:
-		if b.editing {
-			b.status = "navigation locked while editing (Esc to stop)"
+		if !b.editing {
+			if len(b.entries) > 0 {
+				if k.kind == kUp && b.topIdx > 0 {
+					b.topIdx--
+				}
+				if k.kind == kDown && b.topIdx < len(b.entries)-1 {
+					b.topIdx++
+				}
+			}
 			return actNone
 		}
-		if len(b.entries) > 0 {
-			if k.kind == kUp && b.topIdx > 0 {
-				b.topIdx--
-			}
-			if k.kind == kDown && b.topIdx < len(b.entries)-1 {
-				b.topIdx++
-			}
+		b.moveVertical(k.kind == kUp)
+		return actNone
+	case kLeft:
+		if b.pos > 0 {
+			b.pos--
 		}
+		return actNone
+	case kRight:
+		if b.pos < len(b.draft) {
+			b.pos++
+		}
+		return actNone
+	case kHome:
+		b.pos = lineStart(b.draft, b.pos)
+		return actNone
+	case kEnd:
+		b.pos = lineEnd(b.draft, b.pos)
 		return actNone
 	case kEnter:
 		b.maybeAutocorrect()
-		b.draft = append(b.draft, '\n')
+		b.draft = insertAt(b.draft, b.pos, '\n')
+		b.pos++
 		return actNone
 	case kBackspace:
 		if b.undo.active {
 			b.draft = b.undo.snap
+			b.pos = b.undo.pos
 			b.undo.active = false
 			b.status = "autocorrect undone"
 			return actNone
 		}
-		if n := len(b.draft); n > 0 {
-			b.draft = b.draft[:n-1]
+		if b.pos > 0 {
+			b.draft = append(b.draft[:b.pos-1], b.draft[b.pos:]...)
+			b.pos--
 		}
 		return actNone
 	case kTab:
 		if !b.acceptSuggestion() {
-			b.draft = append(b.draft, '\t')
+			b.draft = insertAt(b.draft, b.pos, '\t')
+			b.pos++
 		}
 		return actNone
 	case kRune:
 		if isBoundary(k.r) {
 			b.maybeAutocorrect()
 		}
-		b.draft = append(b.draft, k.r)
+		b.draft = insertAt(b.draft, b.pos, k.r)
+		b.pos++
 		return actNone
 	default:
 		return actNone
@@ -177,6 +205,7 @@ func (b *browser) handlePrompt(k key) action {
 	case kEsc, kCtrlC:
 		b.inPrompt = false
 		b.query = nil
+		b.qpos = 0
 		return actNone
 	case kEnter:
 		ms := searchEntries(b.entries, string(b.query))
@@ -189,16 +218,36 @@ func (b *browser) handlePrompt(k key) action {
 		b.inSearch = true
 		return actNone
 	case kBackspace:
-		if n := len(b.query); n > 0 {
-			b.query = b.query[:n-1]
+		if b.qpos > 0 && b.qpos <= len(b.query) {
+			b.query = append(b.query[:b.qpos-1], b.query[b.qpos:]...)
+			b.qpos--
+		} else if b.qpos > len(b.query) {
+			b.qpos = len(b.query)
 		}
+		return actNone
+	case kLeft:
+		if b.qpos > 0 {
+			b.qpos--
+		}
+		return actNone
+	case kRight:
+		if b.qpos < len(b.query) {
+			b.qpos++
+		}
+		return actNone
+	case kHome:
+		b.qpos = 0
+		return actNone
+	case kEnd:
+		b.qpos = len(b.query)
 		return actNone
 	case kRune, kTab:
 		r := k.r
 		if k.kind == kTab {
 			r = '\t'
 		}
-		b.query = append(b.query, r)
+		b.query = insertAt(b.query, b.qpos, r)
+		b.qpos++
 		return actNone
 	default:
 		return actNone
@@ -236,6 +285,65 @@ func (b *browser) handleSearchView(k key) action {
 	}
 }
 
+// insertAt inserts r at rune offset pos.
+func insertAt(d []rune, pos int, r ...rune) []rune {
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(d) {
+		pos = len(d)
+	}
+	out := make([]rune, 0, len(d)+len(r))
+	out = append(out, d[:pos]...)
+	out = append(out, r...)
+	out = append(out, d[pos:]...)
+	return out
+}
+
+func lineStart(d []rune, pos int) int {
+	if pos > len(d) {
+		pos = len(d)
+	}
+	i := pos
+	for i > 0 && d[i-1] != '\n' {
+		i--
+	}
+	return i
+}
+
+func lineEnd(d []rune, pos int) int {
+	if pos < 0 {
+		pos = 0
+	}
+	i := pos
+	for i < len(d) && d[i] != '\n' {
+		i++
+	}
+	return i
+}
+
+// moveVertical moves the cursor to the previous/next line, keeping the
+// column when the line is long enough.
+func (b *browser) moveVertical(up bool) {
+	start := lineStart(b.draft, b.pos)
+	col := b.pos - start
+	if up {
+		if start == 0 {
+			return
+		}
+		prevEnd := start - 1
+		prevStart := lineStart(b.draft, prevEnd)
+		b.pos = prevStart + min(col, prevEnd-prevStart)
+		return
+	}
+	end := lineEnd(b.draft, b.pos)
+	if end == len(b.draft) {
+		return
+	}
+	nextStart := end + 1
+	nextEnd := lineEnd(b.draft, nextStart)
+	b.pos = nextStart + min(col, nextEnd-nextStart)
+}
 func (b *browser) startEdit() {
 	if b.editing {
 		return
@@ -245,14 +353,17 @@ func (b *browser) startEdit() {
 		return
 	}
 	b.stash = append([]rune(nil), b.draft...)
+	b.stashPos = b.pos
 	b.editIdx = b.topIdx
 	b.draft = []rune(strings.TrimRight(entryBody(b.entries[b.editIdx]), "\n"))
+	b.pos = len(b.draft)
 	b.editing = true
 	b.status = "editing " + displayHeader(b.entries[b.editIdx].Header)
 }
 
 func (b *browser) cancelEdit(msg string) {
 	b.draft = b.stash
+	b.pos = b.stashPos
 	b.stash = nil
 	b.editing = false
 	b.status = msg
@@ -264,7 +375,10 @@ func (b *browser) maybeAutocorrect() {
 	if b.checker == nil || !b.checker.enabled {
 		return
 	}
-	word, start := trailingWord(b.draft)
+	if b.pos > len(b.draft) {
+		b.pos = len(b.draft)
+	}
+	word, start := trailingWord(b.draft[:b.pos])
 	if word == "" {
 		return
 	}
@@ -273,8 +387,10 @@ func (b *browser) maybeAutocorrect() {
 		return
 	}
 	b.undo.snap = append([]rune(nil), b.draft...)
+	b.undo.pos = b.pos
 	b.undo.active = true
-	b.draft = append(b.draft[:start], []rune(rep)...)
+	b.draft = append(append(append([]rune(nil), b.draft[:start]...), []rune(rep)...), b.draft[b.pos:]...)
+	b.pos = start + len([]rune(rep))
 	b.status = "autocorrected " + word + " -> " + rep + " (Backspace undoes)"
 }
 
@@ -284,7 +400,10 @@ func (b *browser) acceptSuggestion() bool {
 	if b.checker == nil || !b.checker.enabled {
 		return false
 	}
-	word, start := trailingWord(b.draft)
+	if b.pos > len(b.draft) {
+		b.pos = len(b.draft)
+	}
+	word, start := trailingWord(b.draft[:b.pos])
 	if word == "" || b.checker.check(word) {
 		return false
 	}
@@ -294,8 +413,10 @@ func (b *browser) acceptSuggestion() bool {
 		return false
 	}
 	b.undo.snap = append([]rune(nil), b.draft...)
+	b.undo.pos = b.pos
 	b.undo.active = true
-	b.draft = append(b.draft[:start], []rune(sugs[0])...)
+	b.draft = append(append(append([]rune(nil), b.draft[:start]...), []rune(sugs[0])...), b.draft[b.pos:]...)
+	b.pos = start + len([]rune(sugs[0]))
 	b.status = "tab: " + word + " -> " + sugs[0] + " (Backspace undoes)"
 	return true
 }
@@ -424,6 +545,7 @@ var sgrRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
 type styledCell struct {
 	r     rune
 	style string // active SGR code, "" when unstyled
+	src   int    // plain-rune index the cell starts at (tabs share one index)
 }
 
 // emitStyled renders cells, switching SGR codes only on change and always
@@ -451,9 +573,12 @@ func emitStyled(cells []styledCell) string {
 
 // lineCells splits a line into visible cells, tracking ANSI SGR state.
 // Tabs expand to 4 spaces (display only, the model keeps '\t').
+// Each cell records the plain-rune index it starts at, so a cursor offset
+// can be mapped back onto wrapped rows.
 func lineCells(s string) []styledCell {
 	var cells []styledCell
 	active := ""
+	src := 0
 	for len(s) > 0 {
 		if loc := sgrRe.FindStringIndex(s); loc != nil && loc[0] == 0 {
 			if s[:loc[1]] == "\x1b[0m" {
@@ -467,14 +592,14 @@ func lineCells(s string) []styledCell {
 		r, size := utf8.DecodeRuneInString(s)
 		s = s[size:]
 		if r == '\t' {
-			// Non-breaking spaces: survive space-collapsing so tab
-			// stops keep their width on display.
 			for i := 0; i < 4; i++ {
-				cells = append(cells, styledCell{'\u00a0', active})
+				cells = append(cells, styledCell{' ', active, src})
 			}
+			src++
 			continue
 		}
-		cells = append(cells, styledCell{r, active})
+		cells = append(cells, styledCell{r, active, src})
+		src++
 	}
 	return cells
 }
@@ -521,85 +646,131 @@ func truncAnsi(s string, w int, tail string) string {
 	return emitStyled(kept) + tail
 }
 
-// wrapLine wraps s to rows of at most w visible cells. Wrapping is
-// word-aware; words longer than w are hard-split. ANSI styles reopen after
-// every break so rows stay self-contained. Runs of spaces collapse to one
-// (display only).
-func wrapLine(s string, w int) []string {
+// wrapCells lays cells out into rows of at most w visible cells. All
+// spacing is preserved exactly so cursor offsets keep mapping 1:1 onto
+// rows. Words stay intact unless longer than w; a fresh row never starts
+// with wrap filler, only with the line's own leading spaces.
+func wrapCells(cells []styledCell, w int) [][]styledCell {
 	if w < 1 {
-		return []string{""}
+		return [][]styledCell{{}}
 	}
-	cells := lineCells(s)
-	var words [][]styledCell
+	// Split into words (non-space runs) and space runs.
+	type chunk struct {
+		cells []styledCell
+		space bool
+	}
+	var chunks []chunk
 	var cur []styledCell
-	for _, c := range cells {
-		if c.r == ' ' {
-			if len(cur) > 0 {
-				words = append(words, cur)
-				cur = nil
-			}
-			continue
+	curSpace := false
+	flushChunk := func() {
+		if len(cur) > 0 {
+			chunks = append(chunks, chunk{cur, curSpace})
+			cur = nil
 		}
+	}
+	for _, c := range cells {
+		isSpace := c.r == ' '
+		if len(cur) > 0 && isSpace != curSpace {
+			flushChunk()
+		}
+		curSpace = isSpace
 		cur = append(cur, c)
 	}
-	if len(cur) > 0 {
-		words = append(words, cur)
+	flushChunk()
+	if len(chunks) == 0 {
+		return [][]styledCell{{}}
 	}
-	if len(words) == 0 {
-		return []string{""}
+	cellW := func(cs []styledCell) int {
+		n := 0
+		for _, c := range cs {
+			n += cellWidth(c.r)
+		}
+		return n
 	}
-	flush := func(row []styledCell) string {
-		return emitStyled(row)
-	}
-	var rows []string
+	var rows [][]styledCell
 	var row []styledCell
 	rowW := 0
-	for _, wd := range words {
-		ww := 0
-		for _, c := range wd {
-			ww += cellWidth(c.r)
+	emit := func() {
+		if len(row) > 0 {
+			rows = append(rows, row)
+			row = nil
+			rowW = 0
 		}
-		if ww > w {
-			if len(row) > 0 {
-				rows = append(rows, flush(row))
-				row = nil
-				rowW = 0
-			}
-			for start := 0; start < len(wd); {
+	}
+	for ci, ch := range chunks {
+		// A space run starting a fresh row mid-text is wrap filler:
+		// drop it instead of indenting the new row. The line's own
+		// leading spaces (first chunk) are always kept, split across
+		// rows if wider than the screen.
+		if ch.space && len(row) == 0 && ci != 0 {
+			continue
+		}
+		ww := cellW(ch.cells)
+		if ww > w && (len(row) == 0 || !ch.space) {
+			emit()
+			for start := 0; start < len(ch.cells); {
 				used := 0
 				end := start
-				for end < len(wd) && used+cellWidth(wd[end].r) <= w {
-					used += cellWidth(wd[end].r)
+				for end < len(ch.cells) && used+cellWidth(ch.cells[end].r) <= w {
+					used += cellWidth(ch.cells[end].r)
 					end++
 				}
 				if end == start {
 					end = start + 1 // rune wider than w: emit anyway
 				}
-				rows = append(rows, flush(wd[start:end]))
+				rows = append(rows, ch.cells[start:end])
 				start = end
 			}
 			continue
 		}
-		need := ww
-		if len(row) > 0 {
-			need++ // separating space
+		if rowW+ww > w {
+			emit()
+			if ch.space {
+				continue // wrap filler, not the line's own indent
+			}
 		}
-		if rowW+need > w {
-			rows = append(rows, flush(row))
-			row = nil
-			rowW = 0
-		}
-		if len(row) > 0 {
-			row = append(row, styledCell{' ', ""})
-			rowW++
-		}
-		row = append(row, wd...)
+		row = append(row, ch.cells...)
 		rowW += ww
 	}
-	if len(row) > 0 {
-		rows = append(rows, flush(row))
+	emit()
+	if len(rows) == 0 {
+		rows = [][]styledCell{{}}
 	}
 	return rows
+}
+
+// wrapLine wraps s to rows of at most w visible cells, word-aware.
+func wrapLine(s string, w int) []string {
+	rows := wrapCells(lineCells(s), w)
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, emitStyled(r))
+	}
+	return out
+}
+
+// cursorPos maps a plain-rune offset onto wrapped rows, returning the row
+// index and the visible column within it. A position between rows sticks
+// to the end of the earlier row.
+func cursorPos(rows [][]styledCell, p int) (int, int) {
+	row, col := 0, 0
+	for ri, r := range rows {
+		c := 0
+		hit := false
+		for _, cell := range r {
+			if cell.src < p {
+				c += cellWidth(cell.r)
+				hit = true
+			} else {
+				break
+			}
+		}
+		if !hit {
+			break
+		}
+		row, col = ri, c
+	}
+	return row, col
 }
 
 // keyFromMsg converts a Bubble Tea key message into one or more internal
@@ -622,6 +793,10 @@ func keyFromMsg(msg tea.KeyMsg) []key {
 		return one(kLeft)
 	case tea.KeyRight:
 		return one(kRight)
+	case tea.KeyHome:
+		return one(kHome)
+	case tea.KeyEnd:
+		return one(kEnd)
 	case tea.KeyEsc:
 		return one(kEsc)
 	case tea.KeySpace:
@@ -719,8 +894,23 @@ func (m teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View lays out title, list, divider, input and help to fill the terminal
-// exactly. The cursor is parked at the end of the input afterwards.
+// helpText returns the key hints fitting the current mode.
+func (b *browser) helpText() string {
+	switch {
+	case b.inPrompt:
+		return "Type query | Enter browse | Esc cancel | Left/Right/Home/End move"
+	case b.inSearch:
+		return "Up/Down matches | Esc write | Ctrl+S save | Ctrl+C discard"
+	case b.editing:
+		return "Type | Arrows/Home/End move | Tab fix | Ctrl+A word | Ctrl+S save | Esc cancel"
+	default:
+		return "Enter newline | Left/Right/Home/End move | Up/Down history | Ctrl+F search | Ctrl+E edit | Tab fix | Ctrl+A word | Ctrl+S save | Ctrl+C discard"
+	}
+}
+
+// View lays out title, help, list, divider and input to fill the terminal
+// exactly. The input sits last so the real cursor lands in it; a final
+// escape parks the cursor at the exact input column.
 func (m teaModel) View() string {
 	w, h := m.width, m.height
 	if w < 20 {
@@ -732,13 +922,26 @@ func (m teaModel) View() string {
 	topHead, topBody := m.b.topPane()
 	bottomHead, bottomLines := m.b.bottomPane()
 	var wrappedBottom []string
+	var bottomCells [][]styledCell
+	var bottomCounts []int
 	for _, ln := range bottomLines {
-		wrappedBottom = append(wrappedBottom, wrapLine(m.mark(ln), w)...)
+		var cellRows [][]styledCell
+		for _, r := range wrapCells(lineCells(m.mark(ln)), w) {
+			wrappedBottom = append(wrappedBottom, emitStyled(r))
+			cellRows = append(cellRows, r)
+		}
+		if len(cellRows) == 0 {
+			cellRows = [][]styledCell{{}}
+			wrappedBottom = append(wrappedBottom, "")
+		}
+		bottomCells = append(bottomCells, cellRows...)
+		bottomCounts = append(bottomCounts, len(cellRows))
 	}
 	bottomRows := len(wrappedBottom)
 	if bottomRows < 1 {
 		bottomRows = 1
 		wrappedBottom = []string{""}
+		bottomCells = [][]styledCell{{}}
 	}
 	maxBody := h - 5 - bottomRows
 	if maxBody < 1 {
@@ -753,7 +956,8 @@ func (m teaModel) View() string {
 		shown = append(shown, "")
 	}
 	var sb strings.Builder
-	sb.WriteString(bar(titleStyle, fmt.Sprintf("llog  %s  |  Ctrl+S save  Ctrl+C discard  Up/Down history  Ctrl+F search  Ctrl+E edit  Tab fix  |  %s", m.b.nowHeader, spellTag(m.b.checker)), w) + "\n")
+	sb.WriteString(bar(titleStyle, fmt.Sprintf("llog  %s  |  %s", m.b.nowHeader, spellTag(m.b.checker)), w) + "\n")
+	sb.WriteString(bar(footStyle, m.b.helpText(), w) + "\n")
 	sb.WriteString(headStyle.Render(truncLine(topHead, w)) + "\n")
 	// Rows are already marked exactly once above; never mark again here,
 	// or the SGR bytes themselves get flagged as words.
@@ -765,16 +969,56 @@ func (m teaModel) View() string {
 	for _, ln := range wrappedBottom {
 		sb.WriteString(ln + "\n")
 	}
-	sb.WriteString(bar(footStyle, "Enter newline | Backspace delete | Up/Down history | Ctrl+F search | Ctrl+E edit | Tab fix | Ctrl+A word | Ctrl+S save | Ctrl+C discard", w))
 	s := strings.TrimSuffix(sb.String(), "\n")
-	col := lipgloss.Width(wrappedBottom[len(wrappedBottom)-1]) + 1
+	// Park the cursor on the input position.
+	crow, ccol := m.cursorRowCol(bottomCounts, bottomCells, bottomLines)
+	up := len(wrappedBottom) - crow
+	if up < 1 {
+		up = 1
+	}
+	col := ccol + 1
 	if col < 1 {
 		col = 1
 	}
 	if col > w {
 		col = w
 	}
-	return s + fmt.Sprintf("\x1b[1A\x1b[%dG", col)
+	return s + fmt.Sprintf("\x1b[%dA\x1b[%dG", up, col)
+}
+
+// cursorRowCol locates the input cursor (draft/pos or query/qpos) in the
+// wrapped bottom rows built by View.
+func (m teaModel) cursorRowCol(counts []int, bottomCells [][]styledCell, bottomLines []string) (int, int) {
+	content := string(m.b.draft)
+	pos := m.b.pos
+	if m.b.inPrompt {
+		content = string(m.b.query)
+		pos = m.b.qpos
+	}
+	runes := []rune(content)
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(runes) {
+		pos = len(runes)
+	}
+	off := 0
+	base := 0
+	for i, ln := range bottomLines {
+		n := len([]rune(ln))
+		if pos <= off+n || i == len(bottomLines)-1 {
+			local := pos - off
+			if local < 0 {
+				local = 0
+			}
+			rows := bottomCells[base : base+counts[i]]
+			r, c := cursorPos(rows, local)
+			return base + r, c
+		}
+		off += n + 1
+		base += counts[i]
+	}
+	return 0, 0
 }
 
 func (m teaModel) mark(line string) string {

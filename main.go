@@ -20,10 +20,12 @@ const usage = `usage:
   llog help            show this help
 
 keys while writing:
+  Type to write; Left/Right/Home/End move the cursor anywhere
   Enter newline, Backspace delete, Up/Down browse previous entries,
-  Ctrl+F search the log, Ctrl+E edit the shown entry, Tab fix word,
-  Ctrl+A add word to dictionary, Ctrl+S save, Ctrl+C discard,
-  Esc cancel search/edit, Backspace right after an autocorrect undoes it
+  Ctrl+F search the log, Ctrl+E edit the shown entry (there Up/Down
+  moves the cursor instead, Esc cancels without saving),
+  Tab fix word, Ctrl+A add word to dictionary, Ctrl+S save,
+  Ctrl+C discard, Backspace right after an autocorrect undoes it
 
 environment:
   LLOG_FILE            path to LOG.TXT (default ` + defaultLogPath + `)

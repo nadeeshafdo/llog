@@ -43,7 +43,7 @@ func TestWrapAnsiKeptIntact(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got %q", got)
 	}
-	if stripAnsi(got[0]) != "teh" || stripAnsi(got[1]) != "ok" {
+	if stripAnsi(got[0]) != "teh " || stripAnsi(got[1]) != "ok" {
 		t.Fatalf("got %q", got)
 	}
 	if !strings.Contains(got[0], "\x1b[31mteh\x1b[0m") {
@@ -75,15 +75,18 @@ func TestWrapWideRunes(t *testing.T) {
 	}
 }
 
-func TestWrapCollapsesSpaces(t *testing.T) {
-	if got := wrapLine("a  b", 10); len(got) != 1 || got[0] != "a b" {
+func TestWrapPreservesSpaces(t *testing.T) {
+	if got := wrapLine("a  b", 10); len(got) != 1 || got[0] != "a  b" {
 		t.Fatalf("got %q", got)
+	}
+	if got := wrapLine("  hi", 10); len(got) != 1 || got[0] != "  hi" {
+		t.Fatalf("indent lost: %q", got)
 	}
 }
 
 func TestWrapTabExpands(t *testing.T) {
 	got := wrapLine("a\tb", 10)
-	if len(got) != 1 || got[0] != "a\u00a0\u00a0\u00a0\u00a0b" {
+	if len(got) != 1 || got[0] != "a    b" {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -113,10 +116,31 @@ func TestViewWrapsTallDraft(t *testing.T) {
 func TestViewCursorColumn(t *testing.T) {
 	b := newBrowser(testEntries(), "h", nil)
 	b.draft = []rune("hi")
+	b.pos = 2
 	m := teaModel{b: b, width: 60, height: 20}
-	out := m.View()
-	if !strings.HasSuffix(out, "\x1b[1A\x1b[3G") {
+	if out := m.View(); !strings.HasSuffix(out, "\x1b[1A\x1b[3G") {
 		t.Fatalf("cursor suffix wrong: %q", out[len(out)-12:])
+	}
+	b.pos = 0
+	m = teaModel{b: b, width: 60, height: 20}
+	if out := m.View(); !strings.HasSuffix(out, "\x1b[1A\x1b[1G") {
+		t.Fatalf("cursor at start wrong: %q", out[len(out)-12:])
+	}
+}
+
+func TestViewCursorMultiline(t *testing.T) {
+	b := newBrowser(testEntries(), "h", nil)
+	b.draft = []rune("ab\ncd")
+	b.pos = 4 // after 'c'
+	m := teaModel{b: b, width: 60, height: 20}
+	if out := m.View(); !strings.HasSuffix(out, "\x1b[1A\x1b[2G") {
+		t.Fatalf("multiline cursor wrong: %q", out[len(out)-12:])
+	}
+	b.draft = []rune("ab\ncd\nef")
+	b.pos = 1 // after 'a', two rows above the bottom
+	m = teaModel{b: b, width: 60, height: 20}
+	if out := m.View(); !strings.HasSuffix(out, "\x1b[3A\x1b[2G") {
+		t.Fatalf("upper-row cursor wrong: %q", out[len(out)-12:])
 	}
 }
 

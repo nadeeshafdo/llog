@@ -215,6 +215,8 @@ func TestKeyFromMsg(t *testing.T) {
 		{tea.KeyMsg{Type: tea.KeyDown}, kDown, 0},
 		{tea.KeyMsg{Type: tea.KeyLeft}, kLeft, 0},
 		{tea.KeyMsg{Type: tea.KeyRight}, kRight, 0},
+		{tea.KeyMsg{Type: tea.KeyHome}, kHome, 0},
+		{tea.KeyMsg{Type: tea.KeyEnd}, kEnd, 0},
 		{tea.KeyMsg{Type: tea.KeyEsc}, kEsc, 0},
 		{tea.KeyMsg{Type: tea.KeyCtrlC}, kCtrlC, 0},
 	}
@@ -396,16 +398,129 @@ func TestBrowserStartEditAndCancel(t *testing.T) {
 	}
 }
 
-func TestBrowserEditLocksNavigation(t *testing.T) {
+func TestBrowserEditUpDownMovesCursor(t *testing.T) {
 	b := newBrowser(testEntries(), "h", nil)
 	press(b, key{kind: kCtrlE})
-	idx := b.topIdx
+	b.draft = []rune("abcdef\nxy")
+	b.pos = len(b.draft)
 	press(b, key{kind: kUp})
-	if b.topIdx != idx {
-		t.Fatal("navigation should be locked while editing")
+	if b.pos != 2 {
+		t.Fatalf("up keeps column, pos=%d", b.pos)
 	}
-	if b.status == "" {
-		t.Fatal("locked navigation should explain itself")
+	press(b, key{kind: kDown})
+	if b.pos != 9 {
+		t.Fatalf("down restores column, pos=%d", b.pos)
+	}
+	b.draft = []rune("ab\ncdefgh")
+	b.pos = len(b.draft)
+	press(b, key{kind: kUp})
+	if b.pos != 2 {
+		t.Fatalf("up clamps to short line, pos=%d", b.pos)
+	}
+	if b.topIdx != 2 {
+		t.Fatal("history must not move while editing")
+	}
+}
+
+func TestBrowserCursorLeftRightHomeEnd(t *testing.T) {
+	b := newBrowser(testEntries(), "h", nil)
+	typeText(b, "hello")
+	for i := 0; i < 5; i++ {
+		press(b, key{kind: kLeft})
+	}
+	if b.pos != 0 {
+		t.Fatalf("left should clamp at 0, got %d", b.pos)
+	}
+	press(b, key{kind: kRight})
+	press(b, key{kind: kRight})
+	if b.pos != 2 {
+		t.Fatalf("got pos=%d", b.pos)
+	}
+	press(b, key{kind: kHome})
+	if b.pos != 0 {
+		t.Fatalf("home got %d", b.pos)
+	}
+	press(b, key{kind: kEnd})
+	if b.pos != 5 {
+		t.Fatalf("end got %d", b.pos)
+	}
+	for i := 0; i < 9; i++ {
+		press(b, key{kind: kRight})
+	}
+	if b.pos != 5 {
+		t.Fatalf("right should clamp at end, got %d", b.pos)
+	}
+}
+
+func TestBrowserMidLineEdit(t *testing.T) {
+	b := newBrowser(testEntries(), "h", nil)
+	typeText(b, "hllo")
+	press(b, key{kind: kLeft})
+	press(b, key{kind: kLeft})
+	press(b, key{kind: kLeft})
+	press(b, runeKey('e'))
+	if string(b.draft) != "hello" {
+		t.Fatalf("insert in middle failed: %q", string(b.draft))
+	}
+	if b.pos != 2 {
+		t.Fatalf("pos=%d", b.pos)
+	}
+	press(b, key{kind: kBackspace})
+	if string(b.draft) != "hllo" {
+		t.Fatalf("backspace in middle failed: %q", string(b.draft))
+	}
+}
+
+func TestBrowserEnterSplitsLine(t *testing.T) {
+	b := newBrowser(testEntries(), "h", nil)
+	press(b, key{kind: kCtrlE})
+	b.draft = []rune("ab")
+	b.pos = 1
+	press(b, key{kind: kEnter})
+	if string(b.draft) != "a\nb" {
+		t.Fatalf("got %q", string(b.draft))
+	}
+	if b.pos != 2 {
+		t.Fatalf("pos=%d", b.pos)
+	}
+	press(b, key{kind: kUp})
+	if b.pos != 0 {
+		t.Fatalf("up to first line start, pos=%d", b.pos)
+	}
+}
+
+func TestBrowserQueryCursor(t *testing.T) {
+	b := newBrowser(testEntries(), "h", nil)
+	press(b, key{kind: kCtrlF})
+	typeText(b, "abc")
+	press(b, key{kind: kLeft})
+	press(b, key{kind: kBackspace})
+	if string(b.query) != "ac" || b.qpos != 1 {
+		t.Fatalf("query=%q qpos=%d", string(b.query), b.qpos)
+	}
+	press(b, key{kind: kHome})
+	press(b, runeKey('z'))
+	if string(b.query) != "zac" {
+		t.Fatalf("query=%q", string(b.query))
+	}
+}
+
+func TestCursorPos(t *testing.T) {
+	cells := lineCells("aaa bbb")
+	rows := wrapCells(cells, 7)
+	if r, c := cursorPos(rows, 0); r != 0 || c != 0 {
+		t.Fatalf("start: %d,%d", r, c)
+	}
+	if r, c := cursorPos(rows, 4); r != 0 || c != 4 {
+		t.Fatalf("mid: %d,%d", r, c)
+	}
+	rows = wrapCells(cells, 4)
+	// "aaa " (4) then "bbb": cursor after the space is end of row 0.
+	if r, c := cursorPos(rows, 4); r != 0 || c != 4 {
+		t.Fatalf("wrap boundary: %d,%d", r, c)
+	}
+	if r, c := cursorPos(rows, 5); r != 1 || c != 1 {
+		t.Fatalf("next row: %d,%d", r, c)
 	}
 }
 

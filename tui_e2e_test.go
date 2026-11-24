@@ -123,3 +123,74 @@ func TestTuiLoopEndToEnd(t *testing.T) {
 // dead terminal instead of returning; no write can happen without an
 // explicit save key, so the log stays untouched. Tested manually, not in CI
 // because it hangs the suite by design.
+
+// TestTuiLoopMidLineEdit types "ac", moves left, inserts "b", saves:
+// the cursor path end to end on a real pty.
+func TestTuiLoopMidLineEdit(t *testing.T) {
+	master, slave := openTestPty(t)
+	defer master.Close()
+	defer slave.Close()
+
+	t.Setenv("TERM", "xterm-256color")
+
+	var mu sync.Mutex
+	var transcript strings.Builder
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := master.Read(buf)
+			if n > 0 {
+				mu.Lock()
+				transcript.Write(buf[:n])
+				mu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	resCh := make(chan e2eOutcome, 1)
+	go func() {
+		entries := []Entry{
+			{Header: "2002..", Text: "2002.. first memory"},
+		}
+		res, err := tuiLoop(slave, slave, entries, "2026/11/24 18:30..", nil)
+		resCh <- e2eOutcome{res, err}
+	}()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		found := strings.Contains(transcript.String(), "-- new entry --")
+		mu.Unlock()
+		if found {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for first frame")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	for _, chunk := range [][]byte{[]byte("ac"), {0x1b, '[', 'D'}, []byte("b"), {0x13}} {
+		if _, err := master.Write(chunk); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	select {
+	case out := <-resCh:
+		if out.err != nil {
+			t.Fatalf("tuiLoop: %v", out.err)
+		}
+		if !out.res.saved {
+			t.Fatal("expected saved result")
+		}
+		if out.res.body != "abc" {
+			t.Fatalf("body = %q, want mid-line edit", out.res.body)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for save")
+	}
+}
