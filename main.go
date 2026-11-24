@@ -12,12 +12,15 @@ import (
 const (
 	defaultLogPath   = "/media/nadeeshafdo/nadeeshafdo/LOG.TXT"
 	defaultBackupDir = "/media/nadeeshafdo/nadeeshafdo/llog-backups"
+	appVersion       = "0.1.0"
 )
 
 const usage = `usage:
   llog                 write a multi-line entry (Ctrl+S saves, Ctrl+C discards)
-  llog "text"          append a one-line entry
-  llog help            show this help
+  llog "text"          append a one-line entry (any text not starting with -)
+  llog -- "text"       append text starting with - literally
+  llog -h              show this help
+  llog -v              show version
 
 keys while writing:
   Type to write; Left/Right/Home/End move the cursor anywhere
@@ -42,15 +45,37 @@ func main() {
 }
 
 func run(args []string, in io.Reader, stdout, stderr io.Writer) error {
-	switch {
-	case len(args) == 0:
+	if len(args) == 0 {
 		return interactive(in, stderr)
-	case len(args) == 1 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help"):
-		fmt.Fprint(stdout, usage)
-		return nil
-	default:
-		return save(newEntry(time.Now(), strings.Join(args, " ")), stderr)
 	}
+	// Only four flags exist: -h, --help, -v, --version. Anything starting
+	// with - is a flag, so a typo can never silently become a journal
+	// entry. Use -- to journal text that starts with a dash.
+	if args[0] == "--" {
+		if len(args) < 2 {
+			return errors.New(`no entry text after "--" (see llog -h)`)
+		}
+		return save(newEntry(time.Now(), strings.Join(args[1:], " ")), stderr)
+	}
+	if strings.HasPrefix(args[0], "-") {
+		switch args[0] {
+		case "-h", "--help":
+			if len(args) > 1 {
+				return fmt.Errorf("flag %s takes no arguments (see llog -h)", args[0])
+			}
+			fmt.Fprint(stdout, usage)
+			return nil
+		case "-v", "--version":
+			if len(args) > 1 {
+				return fmt.Errorf("flag %s takes no arguments (see llog -h)", args[0])
+			}
+			fmt.Fprintf(stdout, "llog %s\n", appVersion)
+			return nil
+		default:
+			return fmt.Errorf("unknown flag %q (see llog -h)", args[0])
+		}
+	}
+	return save(newEntry(time.Now(), strings.Join(args, " ")), stderr)
 }
 
 func interactive(in io.Reader, out io.Writer) error {
