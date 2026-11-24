@@ -1,9 +1,10 @@
 # llog
 
 A personal life-log CLI for one encrypted SD card and one plain-text file.
-`llog` appends timestamped entries to `LOG.TXT` and nothing else. It never
-rewrites history, never syncs anywhere, and refuses to write rather than
-risk the file.
+`llog` appends timestamped entries to `LOG.TXT`. History is never silently
+rewritten: the only way to change an old entry is an explicit Ctrl+E edit,
+which is backup-first and byte-verified. It never syncs anywhere, and
+refuses to write rather than risk the file.
 
 Built with Go as a single static binary. Terminal UI by Bubble Tea.
 
@@ -82,5 +83,6 @@ go test ./...   # 78 tests, including a real-pty end-to-end save test
 
 Layout: `main.go` (commands), `tui.go` (Bubble Tea prompt), `store.go`
 (locked backup/append/edit/verify), `journal.go` (entry parsing),
+`entry.go` (header/body builders), `input.go` (pipe fallback vs prompt),
 `spell.go` (dictionary, check, suggest, autocorrect), `llog_TUI.drawio`
 (screen designs for the prompt).

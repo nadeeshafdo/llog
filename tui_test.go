@@ -577,3 +577,16 @@ func TestBrowserAddWord(t *testing.T) {
 		t.Fatal("add should confirm")
 	}
 }
+
+func TestBrowserAddWordMidLine(t *testing.T) {
+	dir := t.TempDir()
+	sc := testChecker()
+	sc.customPath = dir + "/words.txt"
+	b := newBrowser(testEntries(), "h", sc)
+	b.draft = []rune("zqxjk rest")
+	b.pos = 5
+	press(b, key{kind: kCtrlA})
+	if !sc.check("zqxjk") {
+		t.Fatal("word before cursor should be added")
+	}
+}
