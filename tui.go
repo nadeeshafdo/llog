@@ -4,10 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	runewidth "github.com/mattn/go-runewidth"
 )
 
 type keyKind int
@@ -415,6 +418,143 @@ func fitLines(lines []string, maxRows, w int) []string {
 	return append(kept, fmt.Sprintf("... (%d more lines)", len(out)-(maxRows-1)))
 }
 
+var sgrRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+type styledCell struct {
+	r     rune
+	style string // active SGR code, "" when unstyled
+}
+
+// lineCells splits a line into visible cells, tracking ANSI SGR state.
+// Tabs expand to 4 spaces (display only, the model keeps '\t').
+func lineCells(s string) []styledCell {
+	var cells []styledCell
+	active := ""
+	for len(s) > 0 {
+		if loc := sgrRe.FindStringIndex(s); loc != nil && loc[0] == 0 {
+			if s[:loc[1]] == "\x1b[0m" {
+				active = ""
+			} else {
+				active = s[:loc[1]]
+			}
+			s = s[loc[1]:]
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s)
+		s = s[size:]
+		if r == '\t' {
+			// Non-breaking spaces: survive space-collapsing so tab
+			// stops keep their width on display.
+			for i := 0; i < 4; i++ {
+				cells = append(cells, styledCell{'\u00a0', active})
+			}
+			continue
+		}
+		cells = append(cells, styledCell{r, active})
+	}
+	return cells
+}
+
+func cellWidth(r rune) int {
+	if w := runewidth.RuneWidth(r); w > 0 {
+		return w
+	}
+	return 1
+}
+
+// wrapLine wraps s to rows of at most w visible cells. Wrapping is
+// word-aware; words longer than w are hard-split. ANSI styles reopen after
+// every break so rows stay self-contained. Runs of spaces collapse to one
+// (display only).
+func wrapLine(s string, w int) []string {
+	if w < 1 {
+		return []string{""}
+	}
+	cells := lineCells(s)
+	var words [][]styledCell
+	var cur []styledCell
+	for _, c := range cells {
+		if c.r == ' ' {
+			if len(cur) > 0 {
+				words = append(words, cur)
+				cur = nil
+			}
+			continue
+		}
+		cur = append(cur, c)
+	}
+	if len(cur) > 0 {
+		words = append(words, cur)
+	}
+	if len(words) == 0 {
+		return []string{""}
+	}
+	flush := func(row []styledCell) string {
+		var sb strings.Builder
+		prev := ""
+		for _, c := range row {
+			if c.style != prev {
+				sb.WriteString(c.style)
+				prev = c.style
+			}
+			sb.WriteRune(c.r)
+		}
+		if prev != "" {
+			sb.WriteString("\x1b[0m")
+		}
+		return sb.String()
+	}
+	var rows []string
+	var row []styledCell
+	rowW := 0
+	for _, wd := range words {
+		ww := 0
+		for _, c := range wd {
+			ww += cellWidth(c.r)
+		}
+		if ww > w {
+			if len(row) > 0 {
+				rows = append(rows, flush(row))
+				row = nil
+				rowW = 0
+			}
+			for start := 0; start < len(wd); {
+				used := 0
+				end := start
+				for end < len(wd) && used+cellWidth(wd[end].r) <= w {
+					used += cellWidth(wd[end].r)
+					end++
+				}
+				if end == start {
+					end = start + 1 // rune wider than w: emit anyway
+				}
+				rows = append(rows, flush(wd[start:end]))
+				start = end
+			}
+			continue
+		}
+		need := ww
+		if len(row) > 0 {
+			need++ // separating space
+		}
+		if rowW+need > w {
+			rows = append(rows, flush(row))
+			row = nil
+			rowW = 0
+		}
+		if len(row) > 0 {
+			row = append(row, styledCell{' ', ""})
+			rowW++
+		}
+		row = append(row, wd...)
+		rowW += ww
+	}
+	if len(row) > 0 {
+		rows = append(rows, flush(row))
+	}
+	return rows
+}
+
 // keyFromMsg converts a Bubble Tea key message into one or more internal
 // keys. Pasted text arrives as runes and is fed through one rune at a time.
 func keyFromMsg(msg tea.KeyMsg) []key {
@@ -544,15 +684,24 @@ func (m teaModel) View() string {
 	}
 	topHead, topBody := m.b.topPane()
 	bottomHead, bottomLines := m.b.bottomPane()
-	bottomRows := len(bottomLines)
+	var wrappedBottom []string
+	for _, ln := range bottomLines {
+		wrappedBottom = append(wrappedBottom, wrapLine(m.mark(ln), w)...)
+	}
+	bottomRows := len(wrappedBottom)
 	if bottomRows < 1 {
 		bottomRows = 1
+		wrappedBottom = []string{""}
 	}
 	maxBody := h - 5 - bottomRows
 	if maxBody < 1 {
 		maxBody = 1
 	}
-	shown := fitLines(topBody, maxBody, w)
+	var rows []string
+	for _, ln := range topBody {
+		rows = append(rows, wrapLine(m.mark(ln), w)...)
+	}
+	shown := fitLines(rows, maxBody, w)
 	for len(shown) < maxBody {
 		shown = append(shown, "")
 	}
@@ -564,12 +713,12 @@ func (m teaModel) View() string {
 	}
 	sb.WriteString(dimStyle.Render(strings.Repeat("-", w)) + "\n")
 	sb.WriteString(headStyle.Render(truncLine(bottomHead, w)) + "\n")
-	for _, ln := range bottomLines {
-		sb.WriteString(m.mark(ln) + "\n")
+	for _, ln := range wrappedBottom {
+		sb.WriteString(ln + "\n")
 	}
 	sb.WriteString(bar(footStyle, "Enter newline | Backspace delete | Up/Down history | Ctrl+F search | Ctrl+E edit | Tab fix | Ctrl+A word | Ctrl+S save | Ctrl+C discard", w))
 	s := strings.TrimSuffix(sb.String(), "\n")
-	col := lipgloss.Width(bottomLines[len(bottomLines)-1]) + 1
+	col := lipgloss.Width(wrappedBottom[len(wrappedBottom)-1]) + 1
 	if col < 1 {
 		col = 1
 	}
