@@ -12,7 +12,6 @@ import (
 const (
 	defaultLogPath   = "/media/nadeeshafdo/nadeeshafdo/LOG.TXT"
 	defaultBackupDir = "/media/nadeeshafdo/nadeeshafdo/llog-backups"
-	appVersion       = "0.1.0"
 )
 
 const usage = `usage:
@@ -69,7 +68,7 @@ func run(args []string, in io.Reader, stdout, stderr io.Writer) error {
 			if len(args) > 1 {
 				return fmt.Errorf("flag %s takes no arguments (see llog -h)", args[0])
 			}
-			fmt.Fprintf(stdout, "llog %s\n", appVersion)
+			fmt.Fprintln(stdout, versionString())
 			return nil
 		default:
 			return fmt.Errorf("unknown flag %q (see llog -h)", args[0])
