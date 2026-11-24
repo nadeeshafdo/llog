@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -23,7 +25,15 @@ const (
 	updateOwner   = "nadeeshafdo"
 	updateRepo    = "llog"
 	updateTimeout = 30 * time.Second
-	maxAssetSize  = 100 << 20
+)
+
+var (
+	// Separate caps keep attacker-controlled JSON small while archives
+	// may be large. Tests shrink these.
+	maxAPIBytes     = int64(1 << 20)
+	maxSumsBytes    = int64(64 << 10)
+	maxAssetBytes   = int64(100 << 20)
+	maxArchiveFiles = 1024
 )
 
 type releaseAsset struct {
@@ -44,10 +54,50 @@ func githubToken() string {
 }
 
 func updateClient() *http.Client {
-	return &http.Client{Timeout: updateTimeout}
+	return &http.Client{Timeout: updateTimeout, CheckRedirect: secureRedirect}
 }
 
-func getURL(client *http.Client, url, token string) ([]byte, error) {
+// secureRedirect follows redirects without leaking credentials or
+// downgrading transport: Authorization never leaves its host and http
+// targets are refused outside loopback test hosts.
+func secureRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("too many redirects")
+	}
+	if req.URL.Scheme != "https" && !isLoopbackHost(req.URL.Hostname()) {
+		return fmt.Errorf("refusing non-https redirect to %s", redactHost(req.URL))
+	}
+	if n := len(via); n > 0 && req.URL.Host != via[n-1].URL.Host {
+		req.Header.Del("Authorization")
+	}
+	return nil
+}
+
+func redactHost(u *url.URL) string {
+	return u.Scheme + "://" + u.Host + "/..."
+}
+
+func isLoopbackHost(h string) bool {
+	if h == "localhost" {
+		return true
+	}
+	return net.ParseIP(h).IsLoopback()
+}
+
+// requireHTTPS refuses non-https URLs except loopback test hosts, so a
+// compromised API response cannot push the updater onto cleartext.
+func requireHTTPS(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if u.Scheme == "https" || (u.Scheme == "http" && isLoopbackHost(u.Hostname())) {
+		return nil
+	}
+	return fmt.Errorf("refusing non-https URL %s", redactHost(u))
+}
+
+func getURL(client *http.Client, url, token string, maxBytes int64) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -67,19 +117,23 @@ func getURL(client *http.Client, url, token string) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("GitHub API returned HTTP %d", resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxAssetSize+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("download failed: %w", err)
 	}
-	if len(body) > maxAssetSize {
-		return nil, fmt.Errorf("asset exceeds size limit (%d bytes)", maxAssetSize)
+	if int64(len(body)) > maxBytes {
+		return nil, fmt.Errorf("response exceeds size limit (%d bytes)", maxBytes)
 	}
 	return body, nil
 }
 
 func fetchLatest(client *http.Client, apiBase, owner, repo, token string) (releaseInfo, error) {
 	var rel releaseInfo
-	data, err := getURL(client, strings.TrimSuffix(apiBase, "/")+"/repos/"+owner+"/"+repo+"/releases/latest", token)
+	apiURL := strings.TrimSuffix(apiBase, "/") + "/repos/" + owner + "/" + repo + "/releases/latest"
+	if err := requireHTTPS(apiURL); err != nil {
+		return rel, err
+	}
+	data, err := getURL(client, apiURL, token, maxAPIBytes)
 	if err != nil {
 		return rel, err
 	}
@@ -96,12 +150,25 @@ func fetchLatest(client *http.Client, apiBase, owner, repo, token string) (relea
 	if parsed.TagName == "" {
 		return rel, errors.New("release has no tag")
 	}
-	rel.tag = parsed.TagName
+	rel.tag = cleanTag(parsed.TagName)
+	if rel.tag == "" {
+		return rel, errors.New("release has no tag")
+	}
 	rel.assets = make(map[string]string, len(parsed.Assets))
 	for _, a := range parsed.Assets {
 		rel.assets[a.Name] = a.URL
 	}
 	return rel, nil
+}
+
+// cleanTag strips newlines so a tag can never spoof terminal output.
+func cleanTag(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // selectAsset maps the runtime platform to a release asset name.
@@ -203,50 +270,64 @@ func verifyChecksum(data []byte, sums []byte, name string) error {
 	return fmt.Errorf("no checksum entry for %s", name)
 }
 
-// extractSingle unpacks a tar.gz or zip and returns the binary, preferring
-// the entry named binName and falling back to the first regular file.
+// extractSingle unpacks a tar.gz or zip and returns the entry named
+// binName. Anything else is refused: falling back to an arbitrary first
+// file would let a malformed archive install the wrong bytes.
 func extractSingle(archive []byte, filename, binName string) ([]byte, error) {
 	if strings.HasSuffix(filename, ".zip") {
-		zr, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
-		if err != nil {
-			return nil, fmt.Errorf("cannot read zip: %w", err)
-		}
-		var fallback []byte
-		for _, f := range zr.File {
-			if f.FileInfo().IsDir() {
-				continue
-			}
-			rc, err := f.Open()
-			if err != nil {
-				return nil, err
-			}
-			data, err := io.ReadAll(io.LimitReader(rc, maxAssetSize+1))
-			rc.Close()
-			if err != nil {
-				return nil, err
-			}
-			if len(data) == 0 {
-				continue
-			}
-			if filepath.Base(f.Name) == binName {
-				return data, nil
-			}
-			if fallback == nil {
-				fallback = data
-			}
-		}
-		if fallback != nil {
-			return fallback, nil
-		}
-		return nil, errors.New("no binary in archive")
+		return extractZip(archive, binName)
 	}
+	return extractTarGz(archive, binName)
+}
+
+func extractZip(archive []byte, binName string) ([]byte, error) {
+	zr, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
+	if err != nil {
+		return nil, fmt.Errorf("cannot read zip: %w", err)
+	}
+	files := 0
+	var total int64
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() || !f.FileInfo().Mode().IsRegular() {
+			continue
+		}
+		files++
+		if files > maxArchiveFiles {
+			return nil, fmt.Errorf("archive holds too many files (limit %d)", maxArchiveFiles)
+		}
+		if filepath.Base(f.Name) != binName {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		data, err := io.ReadAll(io.LimitReader(rc, maxAssetBytes+1))
+		rc.Close()
+		if err != nil {
+			return nil, err
+		}
+		total += int64(len(data))
+		if total > maxAssetBytes {
+			return nil, fmt.Errorf("extracted data exceeds size limit (%d bytes)", maxAssetBytes)
+		}
+		if len(data) == 0 {
+			return nil, fmt.Errorf("archive entry %s is empty", binName)
+		}
+		return data, nil
+	}
+	return nil, fmt.Errorf("archive has no %s", binName)
+}
+
+func extractTarGz(archive []byte, binName string) ([]byte, error) {
 	gr, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
 		return nil, fmt.Errorf("cannot read gzip: %w", err)
 	}
 	defer gr.Close()
 	tr := tar.NewReader(gr)
-	var fallback []byte
+	files := 0
+	var total int64
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -258,24 +339,27 @@ func extractSingle(archive []byte, filename, binName string) ([]byte, error) {
 		if !hdr.FileInfo().Mode().IsRegular() {
 			continue
 		}
-		data, err := io.ReadAll(io.LimitReader(tr, maxAssetSize+1))
+		files++
+		if files > maxArchiveFiles {
+			return nil, fmt.Errorf("archive holds too many files (limit %d)", maxArchiveFiles)
+		}
+		if filepath.Base(hdr.Name) != binName {
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(tr, maxAssetBytes+1))
 		if err != nil {
 			return nil, err
 		}
+		total += int64(len(data))
+		if total > maxAssetBytes {
+			return nil, fmt.Errorf("extracted data exceeds size limit (%d bytes)", maxAssetBytes)
+		}
 		if len(data) == 0 {
-			continue
+			return nil, fmt.Errorf("archive entry %s is empty", binName)
 		}
-		if filepath.Base(hdr.Name) == binName {
-			return data, nil
-		}
-		if fallback == nil {
-			fallback = data
-		}
+		return data, nil
 	}
-	if fallback != nil {
-		return fallback, nil
-	}
-	return nil, errors.New("no binary in archive")
+	return nil, fmt.Errorf("archive has no %s", binName)
 }
 
 // performUpdate checks the latest release and, when newer, replaces the
@@ -305,11 +389,17 @@ func performUpdate(client *http.Client, apiBase, owner, repo, token, installPath
 	if !ok {
 		return "", false, fmt.Errorf("release %s has no SHA256SUMS", rel.tag)
 	}
-	data, err := getURL(client, assetURL, token)
+	if err := requireHTTPS(assetURL); err != nil {
+		return "", false, err
+	}
+	if err := requireHTTPS(sumsURL); err != nil {
+		return "", false, err
+	}
+	data, err := getURL(client, assetURL, token, maxAssetBytes)
 	if err != nil {
 		return "", false, err
 	}
-	sums, err := getURL(client, sumsURL, token)
+	sums, err := getURL(client, sumsURL, token, maxSumsBytes)
 	if err != nil {
 		return "", false, err
 	}
@@ -364,6 +454,11 @@ func replaceBinary(path string, data []byte) error {
 	if err := os.Rename(name, path); err != nil {
 		os.Remove(name)
 		return err
+	}
+	// Best-effort durability: the data itself is already synced.
+	if d, err := os.Open(dir); err == nil {
+		_ = d.Sync()
+		d.Close()
 	}
 	return nil
 }

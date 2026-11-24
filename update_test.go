@@ -125,7 +125,7 @@ func TestExtractSingle(t *testing.T) {
 	}
 	var zbuf bytes.Buffer
 	zw := zip.NewWriter(&zbuf)
-	f, err := zw.Create("other-name")
+	f, err := zw.Create("llog")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,10 @@ func TestExtractSingle(t *testing.T) {
 	}
 	got, err = extractSingle(zbuf.Bytes(), "x.zip", "llog")
 	if err != nil || string(got) != "zip-binary" {
-		t.Fatalf("zip fallback got %q %v", got, err)
+		t.Fatalf("zip got %q err=%v", got, err)
+	}
+	if _, err := extractSingle(zbuf.Bytes(), "x.zip", "other"); err == nil {
+		t.Fatal("missing binary name must fail, not fall back")
 	}
 	if _, err := extractSingle([]byte("garbage"), "x.tar.gz", "llog"); err == nil {
 		t.Fatal("garbage should fail")
@@ -232,5 +235,190 @@ func TestPerformUpdateDenied(t *testing.T) {
 
 	if _, _, err := performUpdate(updateClient(), srv.URL, "o", "r", "", filepath.Join(t.TempDir(), "llog"), "v0.0.1"); err == nil || !strings.Contains(err.Error(), "GH_TOKEN") {
 		t.Fatalf("expected token hint, got %v", err)
+	}
+}
+
+func TestRequireHTTPS(t *testing.T) {
+	if err := requireHTTPS("https://api.github.com/x"); err != nil {
+		t.Fatalf("https refused: %v", err)
+	}
+	if err := requireHTTPS("http://127.0.0.1:9/x"); err != nil {
+		t.Fatalf("loopback refused: %v", err)
+	}
+	if err := requireHTTPS("http://localhost:9/x"); err != nil {
+		t.Fatalf("localhost refused: %v", err)
+	}
+	if err := requireHTTPS("http://example.com/x"); err == nil {
+		t.Fatal("cleartext accepted")
+	}
+	if err := requireHTTPS("ftp://example.com/x"); err == nil {
+		t.Fatal("ftp accepted")
+	}
+}
+
+func TestSecureRedirectStripsToken(t *testing.T) {
+	var gotAuth []string
+	final := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = append(gotAuth, r.Header.Get("Authorization"))
+	}))
+	defer final.Close()
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		http.Redirect(w, r, final.URL+"/asset", http.StatusFound)
+	}))
+	defer first.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, first.URL, nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	client := &http.Client{CheckRedirect: secureRedirect}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(gotAuth) != 1 || gotAuth[0] != "" {
+		t.Fatalf("token forwarded cross-host: %q", gotAuth)
+	}
+}
+
+func TestSecureRedirectSameHostPasses(t *testing.T) {
+	req, _ := http.NewRequest(http.MethodGet, "https://a.example/asset", nil)
+	prev, _ := http.NewRequest(http.MethodGet, "https://a.example/release", nil)
+	if err := secureRedirect(req, []*http.Request{prev}); err != nil {
+		t.Fatalf("same-host https should pass: %v", err)
+	}
+}
+
+func TestSecureRedirectRefusesDowngrade(t *testing.T) {
+	req, _ := http.NewRequest(http.MethodGet, "http://cdn.example/asset", nil)
+	prev, _ := http.NewRequest(http.MethodGet, "https://api.example/release", nil)
+	if err := secureRedirect(req, []*http.Request{prev}); err == nil {
+		t.Fatal("http downgrade should be refused")
+	}
+}
+
+func TestCleanTag(t *testing.T) {
+	if got := cleanTag("v1.2.3\nINJECTED\r\n"); got != "v1.2.3INJECTED" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestExtractRejectsFallback(t *testing.T) {
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+	if err := tw.WriteHeader(&tar.Header{Name: "other", Mode: 0o755, Size: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte("xyz")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := extractSingle(buf.Bytes(), "x.tar.gz", "llog"); err == nil {
+		t.Fatal("missing binary name must fail, not fall back")
+	}
+}
+
+func TestExtractSkipsSymlink(t *testing.T) {
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	fh := &zip.FileHeader{Name: "llog"}
+	fh.SetMode(os.ModeSymlink | 0o755)
+	f, err := zw.CreateHeader(fh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("evil-target")); err != nil {
+		t.Fatal(err)
+	}
+	f2, err := zw.Create("llog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f2.Write([]byte("real-bytes")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := extractSingle(buf.Bytes(), "x.zip", "llog")
+	if err != nil || string(got) != "real-bytes" {
+		t.Fatalf("symlink must be skipped, got %q err=%v", got, err)
+	}
+
+	var buf2 bytes.Buffer
+	zw2 := zip.NewWriter(&buf2)
+	fh2 := &zip.FileHeader{Name: "llog"}
+	fh2.SetMode(os.ModeSymlink | 0o755)
+	f3, err := zw2.CreateHeader(fh2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f3.Write([]byte("evil-target")); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw2.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := extractSingle(buf2.Bytes(), "x.zip", "llog"); err == nil {
+		t.Fatal("symlink alone must not count as the binary")
+	}
+}
+
+func TestExtractSizeCap(t *testing.T) {
+	old := maxAssetBytes
+	maxAssetBytes = 16
+	defer func() { maxAssetBytes = old }()
+	data := makeTarGz(t, "llog", []byte("0123456789abcdef0123456789"))
+	if _, err := extractSingle(data, "x.tar.gz", "llog"); err == nil {
+		t.Fatal("over-limit extract must fail")
+	}
+}
+
+func TestExtractFileCountCap(t *testing.T) {
+	old := maxArchiveFiles
+	maxArchiveFiles = 2
+	defer func() { maxArchiveFiles = old }()
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+	for _, n := range []string{"a", "b", "c"} {
+		if err := tw.WriteHeader(&tar.Header{Name: n, Mode: 0o755, Size: 1}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte("x")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := extractSingle(buf.Bytes(), "x.tar.gz", "llog"); err == nil {
+		t.Fatal("too many files must fail")
+	}
+}
+
+func TestOversizedJSONRefused(t *testing.T) {
+	old := maxAPIBytes
+	maxAPIBytes = 64
+	defer func() { maxAPIBytes = old }()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"tag_name":"` + strings.Repeat("v", 200) + `"}`))
+	}))
+	defer srv.Close()
+	_, err := fetchLatest(updateClient(), srv.URL, "o", "r", "")
+	if err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("expected size error, got %v", err)
 	}
 }
