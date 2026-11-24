@@ -1,14 +1,10 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"errors"
-	"io"
-	"os"
 	"strings"
 	"testing"
-	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func testEntries() []Entry {
@@ -31,6 +27,26 @@ func typeText(b *browser, s string) {
 	for _, r := range s {
 		press(b, runeKey(r))
 	}
+}
+
+func testModel(checker *spellChecker) teaModel {
+	return teaModel{b: newBrowser(testEntries(), "2026/11/19 18:30..", checker), width: 60, height: 20}
+}
+
+func sendKeys(m teaModel, msgs ...tea.KeyMsg) teaModel {
+	for _, msg := range msgs {
+		updated, _ := m.Update(msg)
+		m = updated.(teaModel)
+	}
+	return m
+}
+
+func runeMsgs(s string) []tea.KeyMsg {
+	var out []tea.KeyMsg
+	for _, r := range s {
+		out = append(out, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	return out
 }
 
 func TestBrowserHistoryKeepsDraft(t *testing.T) {
@@ -146,80 +162,129 @@ func TestFitLines(t *testing.T) {
 	}
 }
 
-func TestRenderPanes(t *testing.T) {
-	b := newBrowser(testEntries(), "2026/11/19 18:30..", nil)
-	var buf bytes.Buffer
-	render(&buf, b, 60, 20)
-	out := buf.String()
+func TestViewPanes(t *testing.T) {
+	m := testModel(nil)
+	out := m.View()
 	for _, want := range []string{"[history 3/3]", "banana day", "-- new entry --"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("render missing %q in:\n%s", want, out)
+			t.Fatalf("view missing %q in:\n%s", want, out)
 		}
 	}
+	b := newBrowser(testEntries(), "2026/11/19 18:30..", nil)
 	press(b, key{kind: kCtrlF})
 	typeText(b, "church")
-	buf.Reset()
-	render(&buf, b, 60, 20)
-	if !strings.Contains(buf.String(), "-- search: church (1 matches") {
-		t.Fatalf("search render wrong:\n%s", buf.String())
+	m2 := teaModel{b: b, width: 60, height: 20}
+	if out := m2.View(); !strings.Contains(out, "-- search: church (1 matches") {
+		t.Fatalf("search view wrong:\n%s", out)
 	}
 }
 
-func TestReadKeySequences(t *testing.T) {
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pr.Close()
-	defer pw.Close()
-	if _, err := pw.Write([]byte("a\x13\x03\x06\r\x7f\x1b[A\x1b[B")); err != nil {
-		t.Fatal(err)
-	}
-	pw.Close()
-	r := bufio.NewReader(pr)
-	var kinds []keyKind
-	for {
-		k, err := readKey(r, pr)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			t.Fatal(err)
-		}
-		kinds = append(kinds, k.kind)
-	}
-	want := []keyKind{kRune, kCtrlS, kCtrlC, kCtrlF, kEnter, kBackspace, kUp, kDown}
-	if len(kinds) != len(want) {
-		t.Fatalf("got %v want %v", kinds, want)
-	}
-	for i := range want {
-		if kinds[i] != want[i] {
-			t.Fatalf("got %v want %v", kinds, want)
+func TestViewFillsHeight(t *testing.T) {
+	for _, h := range []int{15, 20, 30} {
+		m := teaModel{b: newBrowser(testEntries(), "2026/11/19 18:30..", nil), width: 60, height: h}
+		out := m.View()
+		if n := strings.Count(out, "\n"); n != h-1 {
+			t.Fatalf("height %d: view has %d newlines, want %d", h, n, h-1)
 		}
 	}
 }
 
-func TestReadKeyLoneEsc(t *testing.T) {
-	pr, pw, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
+func TestViewHighlightsTypo(t *testing.T) {
+	sc := testChecker()
+	sc.customPath = ""
+	b := newBrowser(testEntries(), "h", sc)
+	typeText(b, "hello teh")
+	m := teaModel{b: b, width: 60, height: 20}
+	if out := m.View(); !strings.Contains(out, "\x1b[31mteh\x1b[0m") {
+		t.Fatalf("view should highlight typo:\n%s", out)
 	}
-	defer pr.Close()
-	defer pw.Close()
-	if err := pr.SetReadDeadline(time.Now().Add(time.Millisecond)); err != nil {
-		t.Skip("pipes do not support deadlines here, skipping lone-Esc test")
+}
+
+func TestKeyFromMsg(t *testing.T) {
+	cases := []struct {
+		msg  tea.KeyMsg
+		want keyKind
+		r    rune
+	}{
+		{tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}}, kRune, 'a'},
+		{tea.KeyMsg{Type: tea.KeySpace}, kRune, ' '},
+		{tea.KeyMsg{Type: tea.KeyEnter}, kEnter, 0},
+		{tea.KeyMsg{Type: tea.KeyBackspace}, kBackspace, 0},
+		{tea.KeyMsg{Type: tea.KeyTab}, kTab, 0},
+		{tea.KeyMsg{Type: tea.KeyUp}, kUp, 0},
+		{tea.KeyMsg{Type: tea.KeyDown}, kDown, 0},
+		{tea.KeyMsg{Type: tea.KeyLeft}, kLeft, 0},
+		{tea.KeyMsg{Type: tea.KeyRight}, kRight, 0},
+		{tea.KeyMsg{Type: tea.KeyEsc}, kEsc, 0},
+		{tea.KeyMsg{Type: tea.KeyCtrlC}, kCtrlC, 0},
 	}
-	pr.SetReadDeadline(time.Time{})
-	if _, err := pw.Write([]byte{keyEsc}); err != nil {
-		t.Fatal(err)
+	for _, c := range cases {
+		got := keyFromMsg(c.msg)
+		if len(got) != 1 || got[0].kind != c.want || got[0].r != c.r {
+			t.Fatalf("msg %v gave %v", c.msg, got)
+		}
 	}
-	pw.Close()
-	k, err := readKey(bufio.NewReader(pr), pr)
-	if err != nil {
-		t.Fatal(err)
+}
+
+func TestKeyFromMsgCtrl(t *testing.T) {
+	cases := []struct {
+		msg  tea.KeyMsg
+		want keyKind
+	}{
+		{tea.KeyMsg{Type: tea.KeyCtrlS}, kCtrlS},
+		{tea.KeyMsg{Type: tea.KeyCtrlD}, kCtrlS},
+		{tea.KeyMsg{Type: tea.KeyCtrlF}, kCtrlF},
+		{tea.KeyMsg{Type: tea.KeyCtrlE}, kCtrlE},
+		{tea.KeyMsg{Type: tea.KeyCtrlA}, kCtrlA},
+		{tea.KeyMsg{Type: tea.KeyCtrlC}, kCtrlC},
 	}
-	if k.kind != kEsc {
-		t.Fatalf("got %v, want kEsc", k.kind)
+	for _, c := range cases {
+		got := keyFromMsg(c.msg)
+		if len(got) != 1 || got[0].kind != c.want {
+			t.Fatalf("msg %v gave %v, want kind %v", c.msg, got, c.want)
+		}
+	}
+	paste := keyFromMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h', 'i'}})
+	if len(paste) != 2 || paste[0].r != 'h' || paste[1].r != 'i' {
+		t.Fatalf("paste gave %v", paste)
+	}
+	enter := keyFromMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\n'}})
+	if len(enter) != 1 || enter[0].kind != kEnter {
+		t.Fatalf("pasted newline gave %v", enter)
+	}
+}
+
+func TestUpdateEscCancelsEdit(t *testing.T) {
+	m := testModel(nil)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(teaModel)
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlE})
+	m = updated.(teaModel)
+	if cmd != nil || !m.b.editing {
+		t.Fatal("ctrl-e should start editing without quitting")
+	}
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(teaModel)
+	if cmd != nil {
+		t.Fatal("esc cancel should not quit")
+	}
+	if m.b.editing {
+		t.Fatal("esc should cancel editing")
+	}
+	if string(m.b.draft) != "x" {
+		t.Fatalf("stash should be restored, got %q", string(m.b.draft))
+	}
+}
+
+func TestUpdateSaveQuits(t *testing.T) {
+	m := testModel(nil)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(teaModel)
+	if cmd == nil {
+		t.Fatal("ctrl-s should quit")
+	}
+	if !m.result.saved || m.result.editIdx != -1 {
+		t.Fatalf("result = %+v", m.result)
 	}
 }
 
@@ -314,15 +379,5 @@ func TestBrowserAddWord(t *testing.T) {
 	}
 	if b.status == "" {
 		t.Fatal("add should confirm")
-	}
-}
-
-func TestRenderHighlightsTypo(t *testing.T) {
-	b := newBrowser(testEntries(), "h", editTestChecker())
-	typeText(b, "hello teh")
-	var buf strings.Builder
-	render(&buf, b, 60, 20)
-	if !strings.Contains(buf.String(), "\x1b[31mteh\x1b[0m") {
-		t.Fatalf("render should highlight typo:\n%s", buf.String())
 	}
 }

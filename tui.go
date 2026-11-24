@@ -1,15 +1,13 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
-	"golang.org/x/sys/unix"
-	"golang.org/x/term"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type keyKind int
@@ -35,113 +33,6 @@ const (
 type key struct {
 	kind keyKind
 	r    rune
-}
-
-const (
-	keyCtrlA = 0x01
-	keyCtrlD = 0x04
-	keyCtrlE = 0x05
-	keyCtrlF = 0x06
-	keyTab   = 0x09
-)
-
-// readKey reads one key press. Arrow keys arrive as escape sequences.
-func readKey(r *bufio.Reader, f *os.File) (key, error) {
-	ch, _, err := r.ReadRune()
-	if err != nil {
-		return key{}, err
-	}
-	switch ch {
-	case keyCtrlA:
-		return key{kind: kCtrlA}, nil
-	case keyCtrlC:
-		return key{kind: kCtrlC}, nil
-	case keyCtrlE:
-		return key{kind: kCtrlE}, nil
-	case keyCtrlS, keyCtrlD:
-		return key{kind: kCtrlS}, nil
-	case keyCtrlF:
-		return key{kind: kCtrlF}, nil
-	case '\r', '\n':
-		return key{kind: kEnter}, nil
-	case keyBackspace, keyDel:
-		return key{kind: kBackspace}, nil
-	case keyTab:
-		return key{kind: kTab}, nil
-	case keyEsc:
-		return readEscKey(r, f)
-	case 0x20:
-		return key{kind: kRune, r: ch}, nil
-	default:
-		if ch > 0x20 && ch != keyDel {
-			return key{kind: kRune, r: ch}, nil
-		}
-		return key{kind: kUnknown}, nil
-	}
-}
-
-// readEscKey parses an escape sequence. A lone Esc returns kEsc.
-// It uses poll() with a short timeout to tell the two apart: sequence bytes
-// arrive together with Esc, while a lone Esc has nothing after it. Unlike a
-// read deadline, poll() cannot hang the session if it is unsupported.
-func readEscKey(r *bufio.Reader, f *os.File) (key, error) {
-	if r.Buffered() == 0 && !escSequenceWaiting(f) {
-		return key{kind: kEsc}, nil
-	}
-	return readEscSequence(r)
-}
-
-// escSequenceWaiting reports whether more input arrives within a short
-// window after an Esc byte.
-func escSequenceWaiting(f *os.File) bool {
-	pfds := []unix.PollFd{{Fd: int32(f.Fd()), Events: unix.POLLIN}}
-	for {
-		n, err := unix.Poll(pfds, 30)
-		if err == unix.EINTR {
-			continue
-		}
-		if err != nil {
-			return false
-		}
-		return n > 0
-	}
-}
-
-func readEscSequence(r *bufio.Reader) (key, error) {
-	next, _, err := r.ReadRune()
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			return key{kind: kEsc}, nil
-		}
-		return key{}, err
-	}
-	return readEscRest(r, next)
-}
-
-func readEscRest(r *bufio.Reader, next rune) (key, error) {
-	if next != '[' && next != 'O' {
-		return key{kind: kUnknown}, nil
-	}
-	for {
-		c, _, err := r.ReadRune()
-		if err != nil {
-			return key{}, err
-		}
-		switch c {
-		case 'A':
-			return key{kind: kUp}, nil
-		case 'B':
-			return key{kind: kDown}, nil
-		case 'C':
-			return key{kind: kRight}, nil
-		case 'D':
-			return key{kind: kLeft}, nil
-		default:
-			if c >= 0x40 && c <= 0x7e {
-				return key{kind: kUnknown}, nil
-			}
-		}
-	}
 }
 
 type action int
@@ -524,93 +415,188 @@ func fitLines(lines []string, maxRows, w int) []string {
 	return append(kept, fmt.Sprintf("... (%d more lines)", len(out)-(maxRows-1)))
 }
 
-func render(out io.Writer, b *browser, w, h int) {
+// keyFromMsg converts a Bubble Tea key message into one or more internal
+// keys. Pasted text arrives as runes and is fed through one rune at a time.
+func keyFromMsg(msg tea.KeyMsg) []key {
+	one := func(k keyKind) []key { return []key{{kind: k}} }
+	oneRune := func(r rune) []key { return []key{{kind: kRune, r: r}} }
+	switch msg.Type {
+	case tea.KeyEnter:
+		return one(kEnter)
+	case tea.KeyBackspace:
+		return one(kBackspace)
+	case tea.KeyTab:
+		return one(kTab)
+	case tea.KeyUp:
+		return one(kUp)
+	case tea.KeyDown:
+		return one(kDown)
+	case tea.KeyLeft:
+		return one(kLeft)
+	case tea.KeyRight:
+		return one(kRight)
+	case tea.KeyEsc:
+		return one(kEsc)
+	case tea.KeySpace:
+		return oneRune(' ')
+	case tea.KeyRunes:
+		out := make([]key, 0, len(msg.Runes))
+		for _, r := range msg.Runes {
+			switch {
+			case r == '\r' || r == '\n':
+				out = append(out, key{kind: kEnter})
+			case r == '\t':
+				out = append(out, key{kind: kTab})
+			case r == 0x20 || (r > 0x20 && r != 0x7f):
+				out = append(out, key{kind: kRune, r: r})
+			default:
+				out = append(out, key{kind: kUnknown})
+			}
+		}
+		return out
+	}
+	switch msg.String() {
+	case "ctrl+c":
+		return one(kCtrlC)
+	case "ctrl+s", "ctrl+d":
+		return one(kCtrlS)
+	case "ctrl+f":
+		return one(kCtrlF)
+	case "ctrl+e":
+		return one(kCtrlE)
+	case "ctrl+a":
+		return one(kCtrlA)
+	default:
+		return one(kUnknown)
+	}
+}
+
+var (
+	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFFFFF")).Background(lipgloss.Color("#44475A"))
+	headStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8BE9FD"))
+	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#6272A4"))
+	footStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F8F8F2")).Background(lipgloss.Color("#44475A"))
+	spellTagOn  = "spell on"
+	spellTagOff = "spell off"
+)
+
+// bar renders a full-width bar without wrapping: truncate, pad, style.
+func bar(style lipgloss.Style, text string, w int) string {
+	t := truncLine(text, w)
+	if pad := w - lipgloss.Width(t); pad > 0 {
+		t += strings.Repeat(" ", pad)
+	}
+	return style.Render(t)
+}
+
+func spellTag(checker *spellChecker) string {
+	if checker != nil && checker.enabled {
+		return spellTagOn
+	}
+	return spellTagOff
+}
+
+// teaModel is the Bubble Tea program. All journal state lives in browser;
+// this layer only maps messages to it and lays out the view.
+type teaModel struct {
+	b      *browser
+	width  int
+	height int
+	result editResult
+}
+
+func (m teaModel) Init() tea.Cmd { return nil }
+
+func (m teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		return m, nil
+	case tea.KeyMsg:
+		for _, k := range keyFromMsg(msg) {
+			switch m.b.handle(k) {
+			case actSave:
+				idx := -1
+				if m.b.editing {
+					idx = m.b.editIdx
+				}
+				m.result = editResult{body: string(m.b.draft), saved: true, editIdx: idx}
+				return m, tea.Quit
+			case actDiscard:
+				m.result = editResult{editIdx: -1}
+				return m, tea.Quit
+			}
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// View lays out title, list, divider, input and help to fill the terminal
+// exactly. The cursor is parked at the end of the input afterwards.
+func (m teaModel) View() string {
+	w, h := m.width, m.height
 	if w < 20 {
 		w = 20
 	}
 	if h < 10 {
 		h = 10
 	}
-	var sb strings.Builder
-	sb.WriteString("\x1b[2J\x1b[H\x1b[?25l")
-	spellTag := "spell off"
-	if b.checker != nil && b.checker.enabled {
-		spellTag = "spell on"
-	}
-	title := fmt.Sprintf("llog  %s  |  Ctrl+S save  Ctrl+C discard  Up/Down history  Ctrl+F search  Ctrl+E edit  Tab fix  |  %s", b.nowHeader, spellTag)
-	sb.WriteString(truncLine(title, w) + "\r\n")
-	sb.WriteString(strings.Repeat("-", w) + "\r\n")
-	topHead, topBody := b.topPane()
-	sb.WriteString(truncLine(topHead, w) + "\r\n")
-	bottomHead, bottomLines := b.bottomPane()
+	topHead, topBody := m.b.topPane()
+	bottomHead, bottomLines := m.b.bottomPane()
 	bottomRows := len(bottomLines)
 	if bottomRows < 1 {
 		bottomRows = 1
 	}
-	maxBody := h - 2 - 1 - 1 - 1 - bottomRows - 1
+	maxBody := h - 5 - bottomRows
 	if maxBody < 1 {
 		maxBody = 1
 	}
-	for _, ln := range fitLines(topBody, maxBody, w) {
-		sb.WriteString(markLine(b.checker, ln) + "\r\n")
+	shown := fitLines(topBody, maxBody, w)
+	for len(shown) < maxBody {
+		shown = append(shown, "")
 	}
-	sb.WriteString(strings.Repeat("-", w) + "\r\n")
-	sb.WriteString(truncLine(bottomHead, w) + "\r\n")
-	for i, ln := range bottomLines {
-		if i == len(bottomLines)-1 {
-			sb.WriteString(markLine(b.checker, ln))
-			continue
-		}
-		sb.WriteString(markLine(b.checker, ln) + "\r\n")
+	var sb strings.Builder
+	sb.WriteString(bar(titleStyle, fmt.Sprintf("llog  %s  |  Ctrl+S save  Ctrl+C discard  Up/Down history  Ctrl+F search  Ctrl+E edit  Tab fix  |  %s", m.b.nowHeader, spellTag(m.b.checker)), w) + "\n")
+	sb.WriteString(headStyle.Render(truncLine(topHead, w)) + "\n")
+	for _, ln := range shown {
+		sb.WriteString(m.mark(ln) + "\n")
 	}
-	sb.WriteString("\x1b[?25h")
-	fmt.Fprint(out, sb.String())
+	sb.WriteString(dimStyle.Render(strings.Repeat("-", w)) + "\n")
+	sb.WriteString(headStyle.Render(truncLine(bottomHead, w)) + "\n")
+	for _, ln := range bottomLines {
+		sb.WriteString(m.mark(ln) + "\n")
+	}
+	sb.WriteString(bar(footStyle, "Enter newline | Backspace delete | Up/Down history | Ctrl+F search | Ctrl+E edit | Tab fix | Ctrl+A word | Ctrl+S save | Ctrl+C discard", w))
+	s := strings.TrimSuffix(sb.String(), "\n")
+	col := lipgloss.Width(bottomLines[len(bottomLines)-1]) + 1
+	if col < 1 {
+		col = 1
+	}
+	if col > w {
+		col = w
+	}
+	return s + fmt.Sprintf("\x1b[1A\x1b[%dG", col)
 }
 
-func markLine(checker *spellChecker, line string) string {
-	if checker == nil {
+func (m teaModel) mark(line string) string {
+	if m.b.checker == nil {
 		return line
 	}
-	return checker.mark(line)
+	return m.b.checker.mark(line)
 }
 
-// tuiLoop runs the full-screen writing prompt.
+// tuiLoop runs the full-screen prompt and returns the outcome.
 func tuiLoop(inFile, outFile *os.File, entries []Entry, nowHeader string, checker *spellChecker) (editResult, error) {
-	state, err := term.MakeRaw(int(inFile.Fd()))
+	m := teaModel{b: newBrowser(entries, nowHeader, checker), width: 80, height: 24}
+	p := tea.NewProgram(m, tea.WithInput(inFile), tea.WithOutput(outFile), tea.WithAltScreen())
+	final, err := p.Run()
 	if err != nil {
 		return editResult{editIdx: -1}, err
 	}
-	defer term.Restore(int(inFile.Fd()), state)
-	fmt.Fprint(outFile, "\x1b[?1049h")
-	defer fmt.Fprint(outFile, "\x1b[?1049l")
-
-	b := newBrowser(entries, nowHeader, checker)
-	r := bufio.NewReader(inFile)
-	for {
-		w, h, err := term.GetSize(int(outFile.Fd()))
-		if err != nil {
-			w, h = 80, 24
-		}
-		render(outFile, b, w, h)
-		k, err := readKey(r, inFile)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return editResult{body: string(b.draft), saved: true, editIdx: editIdxOf(b)}, nil
-			}
-			return editResult{editIdx: -1}, err
-		}
-		switch b.handle(k) {
-		case actSave:
-			return editResult{body: string(b.draft), saved: true, editIdx: editIdxOf(b)}, nil
-		case actDiscard:
-			return editResult{editIdx: -1}, nil
-		}
+	tm, ok := final.(teaModel)
+	if !ok {
+		return editResult{editIdx: -1}, errors.New("unexpected model type")
 	}
-}
-
-func editIdxOf(b *browser) int {
-	if b.editing {
-		return b.editIdx
-	}
-	return -1
+	return tm.result, nil
 }
