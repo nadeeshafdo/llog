@@ -20,8 +20,10 @@ This puts `llog` in `~/go/bin`. Add that to your `PATH` if needed.
 
 ```sh
 llog                 # write a multi-line entry (Ctrl+S saves, Ctrl+C discards)
-llog "quick note"    # append a one-line entry
-llog help            # show usage
+llog "quick note"    # append a one-line entry (any text not starting with -)
+llog -- "text"       # append text starting with - literally
+llog -h              # show usage
+llog -v              # show version (tag, commit, date)
 ```
 
 Entries look like this:

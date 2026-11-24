@@ -13,6 +13,8 @@ import (
 var fixedNow = time.Date(2026, 11, 19, 18, 30, 0, 0, time.Local)
 
 func TestVersionFlag(t *testing.T) {
+	appVersion, appCommit, appDate = "v0.1.0-test", "abc1234", "2026-11-24"
+	defer func() { appVersion, appCommit, appDate = "", "", "" }()
 	for _, args := range [][]string{{"--version"}, {"-v"}} {
 		dir := t.TempDir()
 		logPath := filepath.Join(dir, "LOG.TXT")
@@ -24,7 +26,7 @@ func TestVersionFlag(t *testing.T) {
 		if err := run(args, strings.NewReader(""), &stdout, &stderr); err != nil {
 			t.Fatalf("%v: %v", args, err)
 		}
-		if stdout.String() != "llog "+appVersion+"\n" {
+		if stdout.String() != "llog v0.1.0-test (abc1234 2026-11-24)\n" {
 			t.Fatalf("%v printed %q", args, stdout.String())
 		}
 		if got := mustRead(t, logPath); got != "start\n" {
@@ -33,6 +35,19 @@ func TestVersionFlag(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, "backups")); !os.IsNotExist(err) {
 			t.Fatalf("%v must not create backups", args)
 		}
+	}
+}
+
+func TestVersionStringFallback(t *testing.T) {
+	defer func() { appVersion, appCommit, appDate = "", "", "" }()
+	appVersion, appCommit, appDate = "", "", ""
+	got := versionString()
+	if !strings.HasPrefix(got, "llog ") || got == "llog " {
+		t.Fatalf("fallback gave %q", got)
+	}
+	appVersion, appCommit, appDate = "", "deadbee", ""
+	if got := versionString(); got != "llog dev (deadbee)" {
+		t.Fatalf("commit-only gave %q", got)
 	}
 }
 
