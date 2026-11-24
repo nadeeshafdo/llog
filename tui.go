@@ -773,6 +773,46 @@ func cursorPos(rows [][]styledCell, p int) (int, int) {
 	return row, col
 }
 
+// emitCursorRow renders a wrapped row with a reverse-video block cursor at
+// the given visible column. The cursor covers the cell there, or appends a
+// block when at the end of a non-full row.
+func emitCursorRow(cells []styledCell, col int, w int) string {
+	used := 0
+	idx := 0
+	for idx < len(cells) && used < col {
+		used += cellWidth(cells[idx].r)
+		idx++
+	}
+	var sb strings.Builder
+	sb.WriteString(emitStyled(cells[:idx]))
+	if idx < len(cells) {
+		covered := []styledCell{{
+			r:     cells[idx].r,
+			style: cells[idx].style + "\x1b[7m",
+			src:   cells[idx].src,
+		}}
+		sb.WriteString(emitStyled(covered))
+		sb.WriteString(emitStyled(cells[idx+1:]))
+		return sb.String()
+	}
+	if used < w {
+		sb.WriteString("\x1b[7m \x1b[0m")
+		return sb.String()
+	}
+	if len(cells) == 0 {
+		return sb.String()
+	}
+	// Row is exactly full: cover the last cell instead of overflowing.
+	head := emitStyled(cells[:len(cells)-1])
+	last := cells[len(cells)-1]
+	covered := []styledCell{{
+		r:     last.r,
+		style: last.style + "\x1b[7m",
+		src:   last.src,
+	}}
+	return head + emitStyled(covered)
+}
+
 // keyFromMsg converts a Bubble Tea key message into one or more internal
 // keys. Pasted text arrives as runes and is fed through one rune at a time.
 func keyFromMsg(msg tea.KeyMsg) []key {
@@ -867,7 +907,7 @@ type teaModel struct {
 	result editResult
 }
 
-func (m teaModel) Init() tea.Cmd { return nil }
+func (m teaModel) Init() tea.Cmd { return tea.HideCursor }
 
 func (m teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -966,29 +1006,24 @@ func (m teaModel) View() string {
 	}
 	sb.WriteString(dimStyle.Render(strings.Repeat("-", w)) + "\n")
 	sb.WriteString(headStyle.Render(truncLine(bottomHead, w)) + "\n")
-	for _, ln := range wrappedBottom {
+	crow, ccol := m.cursorRowCol(bottomCounts, bottomCells, bottomLines, w)
+	for i, ln := range wrappedBottom {
+		if i == crow {
+			sb.WriteString(emitCursorRow(bottomCells[i], ccol, w) + "\n")
+			continue
+		}
 		sb.WriteString(ln + "\n")
 	}
-	s := strings.TrimSuffix(sb.String(), "\n")
-	// Park the cursor on the input position.
-	crow, ccol := m.cursorRowCol(bottomCounts, bottomCells, bottomLines)
-	up := len(wrappedBottom) - crow
-	if up < 1 {
-		up = 1
-	}
-	col := ccol + 1
-	if col < 1 {
-		col = 1
-	}
-	if col > w {
-		col = w
-	}
-	return s + fmt.Sprintf("\x1b[%dA\x1b[%dG", up, col)
+	// No cursor escape: the renderer repositions the real cursor after
+	// every frame, so the visible caret is drawn in content (reverse
+	// video) and the real cursor stays hidden (see Init).
+	return strings.TrimSuffix(sb.String(), "\n")
 }
 
 // cursorRowCol locates the input cursor (draft/pos or query/qpos) in the
-// wrapped bottom rows built by View.
-func (m teaModel) cursorRowCol(counts []int, bottomCells [][]styledCell, bottomLines []string) (int, int) {
+// wrapped bottom rows built by View. A position at a wrap seam belongs to
+// the start of the next row.
+func (m teaModel) cursorRowCol(counts []int, bottomCells [][]styledCell, bottomLines []string, w int) (int, int) {
 	content := string(m.b.draft)
 	pos := m.b.pos
 	if m.b.inPrompt {
@@ -1013,12 +1048,27 @@ func (m teaModel) cursorRowCol(counts []int, bottomCells [][]styledCell, bottomL
 			}
 			rows := bottomCells[base : base+counts[i]]
 			r, c := cursorPos(rows, local)
-			return base + r, c
+			crow := base + r
+			// Wrap seam: end of a full row means start of the next one.
+			if c == rowWidth(rows[r]) && r+1 < len(rows) {
+				r++
+				c = 0
+				crow = base + r
+			}
+			return crow, c
 		}
 		off += n + 1
 		base += counts[i]
 	}
 	return 0, 0
+}
+
+func rowWidth(cells []styledCell) int {
+	n := 0
+	for _, c := range cells {
+		n += cellWidth(c.r)
+	}
+	return n
 }
 
 func (m teaModel) mark(line string) string {

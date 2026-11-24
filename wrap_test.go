@@ -118,33 +118,37 @@ func TestViewCursorColumn(t *testing.T) {
 	b.draft = []rune("hi")
 	b.pos = 2
 	m := teaModel{b: b, width: 60, height: 20}
-	if out := m.View(); !strings.HasSuffix(out, "\x1b[1A\x1b[3G") {
-		t.Fatalf("cursor suffix wrong: %q", out[len(out)-12:])
+	out := m.View()
+	if !strings.Contains(out, "hi\x1b[7m \x1b[0m") {
+		t.Fatalf("end cursor missing block:\n%s", out)
+	}
+	if strings.Contains(out, "\x1b[1A") {
+		t.Fatal("view must not move the real cursor")
 	}
 	b.pos = 0
 	m = teaModel{b: b, width: 60, height: 20}
-	if out := m.View(); !strings.HasSuffix(out, "\x1b[1A\x1b[1G") {
-		t.Fatalf("cursor at start wrong: %q", out[len(out)-12:])
+	if out := m.View(); !strings.Contains(out, "\x1b[7mh\x1b[0mi") {
+		t.Fatalf("start cursor wrong:\n%s", out)
 	}
 }
 
 func TestViewCursorMultiline(t *testing.T) {
 	b := newBrowser(testEntries(), "h", nil)
 	b.draft = []rune("ab\ncd")
-	b.pos = 4 // after 'c'
+	b.pos = 4
 	m := teaModel{b: b, width: 60, height: 20}
-	if out := m.View(); !strings.HasSuffix(out, "\x1b[1A\x1b[2G") {
-		t.Fatalf("multiline cursor wrong: %q", out[len(out)-12:])
+	if out := m.View(); !strings.Contains(out, "c\x1b[7md\x1b[0m") {
+		t.Fatalf("second-line cursor wrong:\n%s", out)
 	}
 	b.draft = []rune("ab\ncd\nef")
-	b.pos = 1 // after 'a', two rows above the bottom
+	b.pos = 1
 	m = teaModel{b: b, width: 60, height: 20}
-	if out := m.View(); !strings.HasSuffix(out, "\x1b[3A\x1b[2G") {
-		t.Fatalf("upper-row cursor wrong: %q", out[len(out)-12:])
+	if out := m.View(); !strings.Contains(out, "a\x1b[7mb\x1b[0m") {
+		t.Fatalf("upper-row cursor wrong:\n%s", out)
 	}
 }
 
-var wellFormedEsc = regexp.MustCompile("\x1b\\[[0-9;]*m|\x1b\\[1A|\x1b\\[[0-9]+G")
+var wellFormedEsc = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 // TestViewNoDoubleMarkAfterNavigation reproduces the corrupted-frames
 // report: browse a long entry with Up/Down, then the whole view must stay
@@ -176,11 +180,7 @@ func TestViewNoDoubleMarkAfterNavigation(t *testing.T) {
 	if strings.Contains(stripped, "\x1b") {
 		t.Fatalf("malformed escape after navigation: %q", stripped)
 	}
-	opens := strings.Count(out, "\x1b[31m")
-	resets := strings.Count(out, "\x1b[0m")
-	if opens == 0 || opens != resets {
-		t.Fatalf("unbalanced marks: opens=%d resets=%d", opens, resets)
-	}
+	assertAnsiBalanced(t, out)
 	for _, word := range []string{"Motors", "goddam", "happens", "alive"} {
 		if !strings.Contains(stripAnsi(out), word) {
 			t.Fatalf("entry text lost: %q missing", word)
@@ -208,16 +208,46 @@ func TestViewNoDoubleMark(t *testing.T) {
 }
 
 // TestViewAnsiBalanced ensures every red-open has a reset in the view.
+// assertAnsiBalanced fails the test if any escape is malformed or any red
+// span is left open. Cursor codes (\x1b[7m) reset independently.
+func assertAnsiBalanced(t *testing.T, out string) {
+	t.Helper()
+	depth := 0
+	for i := 0; i < len(out); {
+		switch {
+		case strings.HasPrefix(out[i:], "\x1b[31m"):
+			depth++
+			i += len("\x1b[31m")
+		case strings.HasPrefix(out[i:], "\x1b[0m"):
+			if depth > 0 {
+				depth--
+			}
+			i += len("\x1b[0m")
+		case strings.HasPrefix(out[i:], "\x1b[7m"):
+			i += len("\x1b[7m")
+		case out[i] == 0x1b:
+			t.Fatalf("unexpected escape at byte %d: %q", i, out[max(0, i-10):min(len(out), i+10)])
+			i++
+		default:
+			i++
+		}
+	}
+	if depth != 0 {
+		t.Fatalf("unclosed red span, depth=%d", depth)
+	}
+}
+
 func TestViewAnsiBalanced(t *testing.T) {
 	sc := testChecker()
 	sc.customPath = ""
 	b := newBrowser(testEntries(), "h", sc)
-	typeText(b, "teh chruch")
+	typeText(b, "chruch zqxq")
 	m := teaModel{b: b, width: 60, height: 20}
 	out := m.View()
-	if n, m2 := strings.Count(out, "\x1b[31m"), strings.Count(out, "\x1b[0m"); n == 0 || n != m2 {
-		t.Fatalf("unbalanced marks: opens=%d resets=%d", n, m2)
+	if !strings.Contains(out, "\x1b[31mchruch") {
+		t.Fatal("expected marked typos")
 	}
+	assertAnsiBalanced(t, out)
 }
 
 // TestViewMarkedWordIntact ensures each misspelling is wrapped exactly once.
