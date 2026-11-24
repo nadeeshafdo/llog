@@ -1,15 +1,16 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"os"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
-	"golang.org/x/sys/unix"
-	"golang.org/x/term"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	runewidth "github.com/mattn/go-runewidth"
 )
 
 type keyKind int
@@ -22,6 +23,8 @@ const (
 	kDown
 	kLeft
 	kRight
+	kHome
+	kEnd
 	kTab
 	kCtrlA
 	kCtrlC
@@ -35,113 +38,6 @@ const (
 type key struct {
 	kind keyKind
 	r    rune
-}
-
-const (
-	keyCtrlA = 0x01
-	keyCtrlD = 0x04
-	keyCtrlE = 0x05
-	keyCtrlF = 0x06
-	keyTab   = 0x09
-)
-
-// readKey reads one key press. Arrow keys arrive as escape sequences.
-func readKey(r *bufio.Reader, f *os.File) (key, error) {
-	ch, _, err := r.ReadRune()
-	if err != nil {
-		return key{}, err
-	}
-	switch ch {
-	case keyCtrlA:
-		return key{kind: kCtrlA}, nil
-	case keyCtrlC:
-		return key{kind: kCtrlC}, nil
-	case keyCtrlE:
-		return key{kind: kCtrlE}, nil
-	case keyCtrlS, keyCtrlD:
-		return key{kind: kCtrlS}, nil
-	case keyCtrlF:
-		return key{kind: kCtrlF}, nil
-	case '\r', '\n':
-		return key{kind: kEnter}, nil
-	case keyBackspace, keyDel:
-		return key{kind: kBackspace}, nil
-	case keyTab:
-		return key{kind: kTab}, nil
-	case keyEsc:
-		return readEscKey(r, f)
-	case 0x20:
-		return key{kind: kRune, r: ch}, nil
-	default:
-		if ch > 0x20 && ch != keyDel {
-			return key{kind: kRune, r: ch}, nil
-		}
-		return key{kind: kUnknown}, nil
-	}
-}
-
-// readEscKey parses an escape sequence. A lone Esc returns kEsc.
-// It uses poll() with a short timeout to tell the two apart: sequence bytes
-// arrive together with Esc, while a lone Esc has nothing after it. Unlike a
-// read deadline, poll() cannot hang the session if it is unsupported.
-func readEscKey(r *bufio.Reader, f *os.File) (key, error) {
-	if r.Buffered() == 0 && !escSequenceWaiting(f) {
-		return key{kind: kEsc}, nil
-	}
-	return readEscSequence(r)
-}
-
-// escSequenceWaiting reports whether more input arrives within a short
-// window after an Esc byte.
-func escSequenceWaiting(f *os.File) bool {
-	pfds := []unix.PollFd{{Fd: int32(f.Fd()), Events: unix.POLLIN}}
-	for {
-		n, err := unix.Poll(pfds, 30)
-		if err == unix.EINTR {
-			continue
-		}
-		if err != nil {
-			return false
-		}
-		return n > 0
-	}
-}
-
-func readEscSequence(r *bufio.Reader) (key, error) {
-	next, _, err := r.ReadRune()
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			return key{kind: kEsc}, nil
-		}
-		return key{}, err
-	}
-	return readEscRest(r, next)
-}
-
-func readEscRest(r *bufio.Reader, next rune) (key, error) {
-	if next != '[' && next != 'O' {
-		return key{kind: kUnknown}, nil
-	}
-	for {
-		c, _, err := r.ReadRune()
-		if err != nil {
-			return key{}, err
-		}
-		switch c {
-		case 'A':
-			return key{kind: kUp}, nil
-		case 'B':
-			return key{kind: kDown}, nil
-		case 'C':
-			return key{kind: kRight}, nil
-		case 'D':
-			return key{kind: kLeft}, nil
-		default:
-			if c >= 0x40 && c <= 0x7e {
-				return key{kind: kUnknown}, nil
-			}
-		}
-	}
 }
 
 type action int
@@ -163,17 +59,20 @@ type editResult struct {
 type undoState struct {
 	active bool
 	snap   []rune
+	pos    int
 }
 
 // browser holds the state of the writing prompt. The draft being typed is
 // always kept; Up/Down only moves the history view, so browsing never loses
-// what was typed.
+// what was typed. pos is the cursor offset in draft, qpos in query.
 type browser struct {
 	entries   []Entry
 	topIdx    int
 	draft     []rune
+	pos       int
 	inPrompt  bool
 	query     []rune
+	qpos      int
 	inSearch  bool
 	matches   []int
 	midx      int
@@ -182,6 +81,7 @@ type browser struct {
 	editing   bool
 	editIdx   int
 	stash     []rune
+	stashPos  int
 	status    string
 	undo      undoState
 }
@@ -229,49 +129,71 @@ func (b *browser) handleEdit(k key) action {
 		}
 		b.inPrompt = true
 		b.query = nil
+		b.qpos = 0
 		return actNone
 	case kCtrlA:
 		b.addWord()
 		return actNone
 	case kUp, kDown:
-		if b.editing {
-			b.status = "navigation locked while editing (Esc to stop)"
+		if !b.editing {
+			if len(b.entries) > 0 {
+				if k.kind == kUp && b.topIdx > 0 {
+					b.topIdx--
+				}
+				if k.kind == kDown && b.topIdx < len(b.entries)-1 {
+					b.topIdx++
+				}
+			}
 			return actNone
 		}
-		if len(b.entries) > 0 {
-			if k.kind == kUp && b.topIdx > 0 {
-				b.topIdx--
-			}
-			if k.kind == kDown && b.topIdx < len(b.entries)-1 {
-				b.topIdx++
-			}
+		b.moveVertical(k.kind == kUp)
+		return actNone
+	case kLeft:
+		if b.pos > 0 {
+			b.pos--
 		}
+		return actNone
+	case kRight:
+		if b.pos < len(b.draft) {
+			b.pos++
+		}
+		return actNone
+	case kHome:
+		b.pos = lineStart(b.draft, b.pos)
+		return actNone
+	case kEnd:
+		b.pos = lineEnd(b.draft, b.pos)
 		return actNone
 	case kEnter:
 		b.maybeAutocorrect()
-		b.draft = append(b.draft, '\n')
+		b.draft = insertAt(b.draft, b.pos, '\n')
+		b.pos++
 		return actNone
 	case kBackspace:
 		if b.undo.active {
 			b.draft = b.undo.snap
+			b.pos = b.undo.pos
 			b.undo.active = false
 			b.status = "autocorrect undone"
 			return actNone
 		}
-		if n := len(b.draft); n > 0 {
-			b.draft = b.draft[:n-1]
+		if b.pos > 0 {
+			b.draft = append(b.draft[:b.pos-1], b.draft[b.pos:]...)
+			b.pos--
 		}
 		return actNone
 	case kTab:
 		if !b.acceptSuggestion() {
-			b.draft = append(b.draft, '\t')
+			b.draft = insertAt(b.draft, b.pos, '\t')
+			b.pos++
 		}
 		return actNone
 	case kRune:
 		if isBoundary(k.r) {
 			b.maybeAutocorrect()
 		}
-		b.draft = append(b.draft, k.r)
+		b.draft = insertAt(b.draft, b.pos, k.r)
+		b.pos++
 		return actNone
 	default:
 		return actNone
@@ -283,6 +205,7 @@ func (b *browser) handlePrompt(k key) action {
 	case kEsc, kCtrlC:
 		b.inPrompt = false
 		b.query = nil
+		b.qpos = 0
 		return actNone
 	case kEnter:
 		ms := searchEntries(b.entries, string(b.query))
@@ -295,16 +218,36 @@ func (b *browser) handlePrompt(k key) action {
 		b.inSearch = true
 		return actNone
 	case kBackspace:
-		if n := len(b.query); n > 0 {
-			b.query = b.query[:n-1]
+		if b.qpos > 0 && b.qpos <= len(b.query) {
+			b.query = append(b.query[:b.qpos-1], b.query[b.qpos:]...)
+			b.qpos--
+		} else if b.qpos > len(b.query) {
+			b.qpos = len(b.query)
 		}
+		return actNone
+	case kLeft:
+		if b.qpos > 0 {
+			b.qpos--
+		}
+		return actNone
+	case kRight:
+		if b.qpos < len(b.query) {
+			b.qpos++
+		}
+		return actNone
+	case kHome:
+		b.qpos = 0
+		return actNone
+	case kEnd:
+		b.qpos = len(b.query)
 		return actNone
 	case kRune, kTab:
 		r := k.r
 		if k.kind == kTab {
 			r = '\t'
 		}
-		b.query = append(b.query, r)
+		b.query = insertAt(b.query, b.qpos, r)
+		b.qpos++
 		return actNone
 	default:
 		return actNone
@@ -342,6 +285,65 @@ func (b *browser) handleSearchView(k key) action {
 	}
 }
 
+// insertAt inserts r at rune offset pos.
+func insertAt(d []rune, pos int, r ...rune) []rune {
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(d) {
+		pos = len(d)
+	}
+	out := make([]rune, 0, len(d)+len(r))
+	out = append(out, d[:pos]...)
+	out = append(out, r...)
+	out = append(out, d[pos:]...)
+	return out
+}
+
+func lineStart(d []rune, pos int) int {
+	if pos > len(d) {
+		pos = len(d)
+	}
+	i := pos
+	for i > 0 && d[i-1] != '\n' {
+		i--
+	}
+	return i
+}
+
+func lineEnd(d []rune, pos int) int {
+	if pos < 0 {
+		pos = 0
+	}
+	i := pos
+	for i < len(d) && d[i] != '\n' {
+		i++
+	}
+	return i
+}
+
+// moveVertical moves the cursor to the previous/next line, keeping the
+// column when the line is long enough.
+func (b *browser) moveVertical(up bool) {
+	start := lineStart(b.draft, b.pos)
+	col := b.pos - start
+	if up {
+		if start == 0 {
+			return
+		}
+		prevEnd := start - 1
+		prevStart := lineStart(b.draft, prevEnd)
+		b.pos = prevStart + min(col, prevEnd-prevStart)
+		return
+	}
+	end := lineEnd(b.draft, b.pos)
+	if end == len(b.draft) {
+		return
+	}
+	nextStart := end + 1
+	nextEnd := lineEnd(b.draft, nextStart)
+	b.pos = nextStart + min(col, nextEnd-nextStart)
+}
 func (b *browser) startEdit() {
 	if b.editing {
 		return
@@ -351,14 +353,17 @@ func (b *browser) startEdit() {
 		return
 	}
 	b.stash = append([]rune(nil), b.draft...)
+	b.stashPos = b.pos
 	b.editIdx = b.topIdx
 	b.draft = []rune(strings.TrimRight(entryBody(b.entries[b.editIdx]), "\n"))
+	b.pos = len(b.draft)
 	b.editing = true
 	b.status = "editing " + displayHeader(b.entries[b.editIdx].Header)
 }
 
 func (b *browser) cancelEdit(msg string) {
 	b.draft = b.stash
+	b.pos = b.stashPos
 	b.stash = nil
 	b.editing = false
 	b.status = msg
@@ -370,7 +375,10 @@ func (b *browser) maybeAutocorrect() {
 	if b.checker == nil || !b.checker.enabled {
 		return
 	}
-	word, start := trailingWord(b.draft)
+	if b.pos > len(b.draft) {
+		b.pos = len(b.draft)
+	}
+	word, start := trailingWord(b.draft[:b.pos])
 	if word == "" {
 		return
 	}
@@ -379,8 +387,10 @@ func (b *browser) maybeAutocorrect() {
 		return
 	}
 	b.undo.snap = append([]rune(nil), b.draft...)
+	b.undo.pos = b.pos
 	b.undo.active = true
-	b.draft = append(b.draft[:start], []rune(rep)...)
+	b.draft = append(append(append([]rune(nil), b.draft[:start]...), []rune(rep)...), b.draft[b.pos:]...)
+	b.pos = start + len([]rune(rep))
 	b.status = "autocorrected " + word + " -> " + rep + " (Backspace undoes)"
 }
 
@@ -390,7 +400,10 @@ func (b *browser) acceptSuggestion() bool {
 	if b.checker == nil || !b.checker.enabled {
 		return false
 	}
-	word, start := trailingWord(b.draft)
+	if b.pos > len(b.draft) {
+		b.pos = len(b.draft)
+	}
+	word, start := trailingWord(b.draft[:b.pos])
 	if word == "" || b.checker.check(word) {
 		return false
 	}
@@ -400,8 +413,10 @@ func (b *browser) acceptSuggestion() bool {
 		return false
 	}
 	b.undo.snap = append([]rune(nil), b.draft...)
+	b.undo.pos = b.pos
 	b.undo.active = true
-	b.draft = append(b.draft[:start], []rune(sugs[0])...)
+	b.draft = append(append(append([]rune(nil), b.draft[:start]...), []rune(sugs[0])...), b.draft[b.pos:]...)
+	b.pos = start + len([]rune(sugs[0]))
 	b.status = "tab: " + word + " -> " + sugs[0] + " (Backspace undoes)"
 	return true
 }
@@ -507,12 +522,13 @@ func truncLine(s string, w int) string {
 	return string(r[:w-1]) + "…"
 }
 
-// fitLines truncates lines to the width and keeps at most maxRows of them,
-// replacing the last row with a counter when content is cut.
+// fitLines keeps at most maxRows rows, cutting over-wide rows with an
+// ANSI-safe truncator and replacing the tail with a counter when content
+// is cut. Rows may carry ANSI highlight codes; the counter never does.
 func fitLines(lines []string, maxRows, w int) []string {
 	out := make([]string, 0, len(lines))
 	for _, ln := range lines {
-		out = append(out, truncLine(ln, w))
+		out = append(out, truncAnsi(ln, w, "…"))
 	}
 	if len(out) <= maxRows {
 		return out
@@ -524,93 +540,558 @@ func fitLines(lines []string, maxRows, w int) []string {
 	return append(kept, fmt.Sprintf("... (%d more lines)", len(out)-(maxRows-1)))
 }
 
-func render(out io.Writer, b *browser, w, h int) {
+var sgrRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+type styledCell struct {
+	r     rune
+	style string // active SGR code, "" when unstyled
+	src   int    // plain-rune index the cell starts at (tabs share one index)
+}
+
+// emitStyled renders cells, switching SGR codes only on change and always
+// resetting an open style, so output never carries redundant or dangling
+// codes even when styles were split apart by wrapping.
+func emitStyled(cells []styledCell) string {
+	var sb strings.Builder
+	prev := ""
+	for _, c := range cells {
+		if c.style != prev {
+			if c.style == "" {
+				sb.WriteString("\x1b[0m")
+			} else {
+				sb.WriteString(c.style)
+			}
+			prev = c.style
+		}
+		sb.WriteRune(c.r)
+	}
+	if prev != "" {
+		sb.WriteString("\x1b[0m")
+	}
+	return sb.String()
+}
+
+// lineCells splits a line into visible cells, tracking ANSI SGR state.
+// Tabs expand to 4 spaces (display only, the model keeps '\t').
+// Each cell records the plain-rune index it starts at, so a cursor offset
+// can be mapped back onto wrapped rows.
+func lineCells(s string) []styledCell {
+	var cells []styledCell
+	active := ""
+	src := 0
+	for len(s) > 0 {
+		if loc := sgrRe.FindStringIndex(s); loc != nil && loc[0] == 0 {
+			if s[:loc[1]] == "\x1b[0m" {
+				active = ""
+			} else {
+				active = s[:loc[1]]
+			}
+			s = s[loc[1]:]
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s)
+		s = s[size:]
+		if r == '\t' {
+			for i := 0; i < 4; i++ {
+				cells = append(cells, styledCell{' ', active, src})
+			}
+			src++
+			continue
+		}
+		cells = append(cells, styledCell{r, active, src})
+		src++
+	}
+	return cells
+}
+
+func cellWidth(r rune) int {
+	if w := runewidth.RuneWidth(r); w > 0 {
+		return w
+	}
+	return 1
+}
+
+// truncAnsi cuts s to at most w visible cells without breaking ANSI SGR
+// sequences or splitting wide runes. A tail (e.g. "…") is appended when cut.
+func truncAnsi(s string, w int, tail string) string {
+	if w < 1 {
+		return ""
+	}
+	cells := lineCells(s)
+	width := 0
+	for _, c := range cells {
+		width += cellWidth(c.r)
+	}
+	if width <= w {
+		return s
+	}
+	tailW := 0
+	for _, r := range tail {
+		tailW += cellWidth(r)
+	}
+	limit := w - tailW
+	if limit < 0 {
+		limit = 0
+	}
+	var kept []styledCell
+	used := 0
+	for _, c := range cells {
+		cw := cellWidth(c.r)
+		if used+cw > limit {
+			break
+		}
+		kept = append(kept, c)
+		used += cw
+	}
+	return emitStyled(kept) + tail
+}
+
+// wrapCells lays cells out into rows of at most w visible cells. All
+// spacing is preserved exactly so cursor offsets keep mapping 1:1 onto
+// rows. Words stay intact unless longer than w; a fresh row never starts
+// with wrap filler, only with the line's own leading spaces.
+func wrapCells(cells []styledCell, w int) [][]styledCell {
+	if w < 1 {
+		return [][]styledCell{{}}
+	}
+	// Split into words (non-space runs) and space runs.
+	type chunk struct {
+		cells []styledCell
+		space bool
+	}
+	var chunks []chunk
+	var cur []styledCell
+	curSpace := false
+	flushChunk := func() {
+		if len(cur) > 0 {
+			chunks = append(chunks, chunk{cur, curSpace})
+			cur = nil
+		}
+	}
+	for _, c := range cells {
+		isSpace := c.r == ' '
+		if len(cur) > 0 && isSpace != curSpace {
+			flushChunk()
+		}
+		curSpace = isSpace
+		cur = append(cur, c)
+	}
+	flushChunk()
+	if len(chunks) == 0 {
+		return [][]styledCell{{}}
+	}
+	cellW := func(cs []styledCell) int {
+		n := 0
+		for _, c := range cs {
+			n += cellWidth(c.r)
+		}
+		return n
+	}
+	var rows [][]styledCell
+	var row []styledCell
+	rowW := 0
+	emit := func() {
+		if len(row) > 0 {
+			rows = append(rows, row)
+			row = nil
+			rowW = 0
+		}
+	}
+	for ci, ch := range chunks {
+		// A space run starting a fresh row mid-text is wrap filler:
+		// drop it instead of indenting the new row. The line's own
+		// leading spaces (first chunk) are always kept, split across
+		// rows if wider than the screen.
+		if ch.space && len(row) == 0 && ci != 0 {
+			continue
+		}
+		ww := cellW(ch.cells)
+		if ww > w && (len(row) == 0 || !ch.space) {
+			emit()
+			for start := 0; start < len(ch.cells); {
+				used := 0
+				end := start
+				for end < len(ch.cells) && used+cellWidth(ch.cells[end].r) <= w {
+					used += cellWidth(ch.cells[end].r)
+					end++
+				}
+				if end == start {
+					end = start + 1 // rune wider than w: emit anyway
+				}
+				rows = append(rows, ch.cells[start:end])
+				start = end
+			}
+			continue
+		}
+		if rowW+ww > w {
+			emit()
+			if ch.space {
+				continue // wrap filler, not the line's own indent
+			}
+		}
+		row = append(row, ch.cells...)
+		rowW += ww
+	}
+	emit()
+	if len(rows) == 0 {
+		rows = [][]styledCell{{}}
+	}
+	return rows
+}
+
+// wrapLine wraps s to rows of at most w visible cells, word-aware.
+func wrapLine(s string, w int) []string {
+	rows := wrapCells(lineCells(s), w)
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, emitStyled(r))
+	}
+	return out
+}
+
+// cursorPos maps a plain-rune offset onto wrapped rows, returning the row
+// index and the visible column within it. A position between rows sticks
+// to the end of the earlier row.
+func cursorPos(rows [][]styledCell, p int) (int, int) {
+	row, col := 0, 0
+	for ri, r := range rows {
+		c := 0
+		hit := false
+		for _, cell := range r {
+			if cell.src < p {
+				c += cellWidth(cell.r)
+				hit = true
+			} else {
+				break
+			}
+		}
+		if !hit {
+			break
+		}
+		row, col = ri, c
+	}
+	return row, col
+}
+
+// emitCursorRow renders a wrapped row with a reverse-video block cursor at
+// the given visible column. The cursor covers the cell there, or appends a
+// block when at the end of a non-full row.
+func emitCursorRow(cells []styledCell, col int, w int) string {
+	used := 0
+	idx := 0
+	for idx < len(cells) && used < col {
+		used += cellWidth(cells[idx].r)
+		idx++
+	}
+	var sb strings.Builder
+	sb.WriteString(emitStyled(cells[:idx]))
+	if idx < len(cells) {
+		covered := []styledCell{{
+			r:     cells[idx].r,
+			style: cells[idx].style + "\x1b[7m",
+			src:   cells[idx].src,
+		}}
+		sb.WriteString(emitStyled(covered))
+		sb.WriteString(emitStyled(cells[idx+1:]))
+		return sb.String()
+	}
+	if used < w {
+		sb.WriteString("\x1b[7m \x1b[0m")
+		return sb.String()
+	}
+	if len(cells) == 0 {
+		return sb.String()
+	}
+	// Row is exactly full: cover the last cell instead of overflowing.
+	head := emitStyled(cells[:len(cells)-1])
+	last := cells[len(cells)-1]
+	covered := []styledCell{{
+		r:     last.r,
+		style: last.style + "\x1b[7m",
+		src:   last.src,
+	}}
+	return head + emitStyled(covered)
+}
+
+// keyFromMsg converts a Bubble Tea key message into one or more internal
+// keys. Pasted text arrives as runes and is fed through one rune at a time.
+func keyFromMsg(msg tea.KeyMsg) []key {
+	one := func(k keyKind) []key { return []key{{kind: k}} }
+	oneRune := func(r rune) []key { return []key{{kind: kRune, r: r}} }
+	switch msg.Type {
+	case tea.KeyEnter:
+		return one(kEnter)
+	case tea.KeyBackspace, tea.KeyDelete:
+		return one(kBackspace)
+	case tea.KeyTab:
+		return one(kTab)
+	case tea.KeyUp:
+		return one(kUp)
+	case tea.KeyDown:
+		return one(kDown)
+	case tea.KeyLeft:
+		return one(kLeft)
+	case tea.KeyRight:
+		return one(kRight)
+	case tea.KeyHome:
+		return one(kHome)
+	case tea.KeyEnd:
+		return one(kEnd)
+	case tea.KeyEsc:
+		return one(kEsc)
+	case tea.KeySpace:
+		return oneRune(' ')
+	case tea.KeyRunes:
+		out := make([]key, 0, len(msg.Runes))
+		for _, r := range msg.Runes {
+			switch {
+			case r == '\r' || r == '\n':
+				out = append(out, key{kind: kEnter})
+			case r == '\t':
+				out = append(out, key{kind: kTab})
+			case r == 0x20 || (r > 0x20 && r != 0x7f):
+				out = append(out, key{kind: kRune, r: r})
+			default:
+				out = append(out, key{kind: kUnknown})
+			}
+		}
+		return out
+	}
+	switch msg.String() {
+	case "ctrl+c":
+		return one(kCtrlC)
+	case "ctrl+s", "ctrl+d":
+		return one(kCtrlS)
+	case "ctrl+f":
+		return one(kCtrlF)
+	case "ctrl+e":
+		return one(kCtrlE)
+	case "ctrl+a":
+		return one(kCtrlA)
+	default:
+		return one(kUnknown)
+	}
+}
+
+var (
+	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFFFFF")).Background(lipgloss.Color("#44475A"))
+	headStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#8BE9FD"))
+	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#6272A4"))
+	footStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#F8F8F2")).Background(lipgloss.Color("#44475A"))
+	spellTagOn  = "spell on"
+	spellTagOff = "spell off"
+)
+
+// bar renders a full-width bar without wrapping: truncate, pad, style.
+func bar(style lipgloss.Style, text string, w int) string {
+	t := truncLine(text, w)
+	if pad := w - lipgloss.Width(t); pad > 0 {
+		t += strings.Repeat(" ", pad)
+	}
+	return style.Render(t)
+}
+
+func spellTag(checker *spellChecker) string {
+	if checker != nil && checker.enabled {
+		return spellTagOn
+	}
+	return spellTagOff
+}
+
+// teaModel is the Bubble Tea program. All journal state lives in browser;
+// this layer only maps messages to it and lays out the view.
+type teaModel struct {
+	b      *browser
+	width  int
+	height int
+	result editResult
+}
+
+func (m teaModel) Init() tea.Cmd { return tea.HideCursor }
+
+func (m teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+		return m, nil
+	case tea.KeyMsg:
+		for _, k := range keyFromMsg(msg) {
+			switch m.b.handle(k) {
+			case actSave:
+				idx := -1
+				if m.b.editing {
+					idx = m.b.editIdx
+				}
+				m.result = editResult{body: string(m.b.draft), saved: true, editIdx: idx}
+				return m, tea.Quit
+			case actDiscard:
+				m.result = editResult{editIdx: -1}
+				return m, tea.Quit
+			}
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// helpText returns the key hints fitting the current mode.
+func (b *browser) helpText() string {
+	switch {
+	case b.inPrompt:
+		return "Type query | Enter browse | Esc cancel | Left/Right/Home/End move"
+	case b.inSearch:
+		return "Up/Down matches | Esc write | Ctrl+S save | Ctrl+C discard"
+	case b.editing:
+		return "Type | Arrows/Home/End move | Tab fix | Ctrl+A word | Ctrl+S save | Esc cancel"
+	default:
+		return "Enter newline | Left/Right/Home/End move | Up/Down history | Ctrl+F search | Ctrl+E edit | Tab fix | Ctrl+A word | Ctrl+S save | Ctrl+C discard"
+	}
+}
+
+// View lays out title, help, list, divider and input to fill the terminal
+// exactly. The input sits last so the real cursor lands in it; a final
+// escape parks the cursor at the exact input column.
+func (m teaModel) View() string {
+	w, h := m.width, m.height
 	if w < 20 {
 		w = 20
 	}
 	if h < 10 {
 		h = 10
 	}
-	var sb strings.Builder
-	sb.WriteString("\x1b[2J\x1b[H\x1b[?25l")
-	spellTag := "spell off"
-	if b.checker != nil && b.checker.enabled {
-		spellTag = "spell on"
+	topHead, topBody := m.b.topPane()
+	bottomHead, bottomLines := m.b.bottomPane()
+	var wrappedBottom []string
+	var bottomCells [][]styledCell
+	var bottomCounts []int
+	for _, ln := range bottomLines {
+		var cellRows [][]styledCell
+		for _, r := range wrapCells(lineCells(m.mark(ln)), w) {
+			wrappedBottom = append(wrappedBottom, emitStyled(r))
+			cellRows = append(cellRows, r)
+		}
+		if len(cellRows) == 0 {
+			cellRows = [][]styledCell{{}}
+			wrappedBottom = append(wrappedBottom, "")
+		}
+		bottomCells = append(bottomCells, cellRows...)
+		bottomCounts = append(bottomCounts, len(cellRows))
 	}
-	title := fmt.Sprintf("llog  %s  |  Ctrl+S save  Ctrl+C discard  Up/Down history  Ctrl+F search  Ctrl+E edit  Tab fix  |  %s", b.nowHeader, spellTag)
-	sb.WriteString(truncLine(title, w) + "\r\n")
-	sb.WriteString(strings.Repeat("-", w) + "\r\n")
-	topHead, topBody := b.topPane()
-	sb.WriteString(truncLine(topHead, w) + "\r\n")
-	bottomHead, bottomLines := b.bottomPane()
-	bottomRows := len(bottomLines)
+	bottomRows := len(wrappedBottom)
 	if bottomRows < 1 {
 		bottomRows = 1
+		wrappedBottom = []string{""}
+		bottomCells = [][]styledCell{{}}
 	}
-	maxBody := h - 2 - 1 - 1 - 1 - bottomRows - 1
+	maxBody := h - 5 - bottomRows
 	if maxBody < 1 {
 		maxBody = 1
 	}
-	for _, ln := range fitLines(topBody, maxBody, w) {
-		sb.WriteString(markLine(b.checker, ln) + "\r\n")
+	var rows []string
+	for _, ln := range topBody {
+		rows = append(rows, wrapLine(m.mark(ln), w)...)
 	}
-	sb.WriteString(strings.Repeat("-", w) + "\r\n")
-	sb.WriteString(truncLine(bottomHead, w) + "\r\n")
-	for i, ln := range bottomLines {
-		if i == len(bottomLines)-1 {
-			sb.WriteString(markLine(b.checker, ln))
+	shown := fitLines(rows, maxBody, w)
+	for len(shown) < maxBody {
+		shown = append(shown, "")
+	}
+	var sb strings.Builder
+	sb.WriteString(bar(titleStyle, fmt.Sprintf("llog  %s  |  %s", m.b.nowHeader, spellTag(m.b.checker)), w) + "\n")
+	sb.WriteString(bar(footStyle, m.b.helpText(), w) + "\n")
+	sb.WriteString(headStyle.Render(truncLine(topHead, w)) + "\n")
+	// Rows are already marked exactly once above; never mark again here,
+	// or the SGR bytes themselves get flagged as words.
+	for _, ln := range shown {
+		sb.WriteString(ln + "\n")
+	}
+	sb.WriteString(dimStyle.Render(strings.Repeat("-", w)) + "\n")
+	sb.WriteString(headStyle.Render(truncLine(bottomHead, w)) + "\n")
+	crow, ccol := m.cursorRowCol(bottomCounts, bottomCells, bottomLines, w)
+	for i, ln := range wrappedBottom {
+		if i == crow {
+			sb.WriteString(emitCursorRow(bottomCells[i], ccol, w) + "\n")
 			continue
 		}
-		sb.WriteString(markLine(b.checker, ln) + "\r\n")
+		sb.WriteString(ln + "\n")
 	}
-	sb.WriteString("\x1b[?25h")
-	fmt.Fprint(out, sb.String())
+	// No cursor escape: the renderer repositions the real cursor after
+	// every frame, so the visible caret is drawn in content (reverse
+	// video) and the real cursor stays hidden (see Init).
+	return strings.TrimSuffix(sb.String(), "\n")
 }
 
-func markLine(checker *spellChecker, line string) string {
-	if checker == nil {
+// cursorRowCol locates the input cursor (draft/pos or query/qpos) in the
+// wrapped bottom rows built by View. A position at a wrap seam belongs to
+// the start of the next row.
+func (m teaModel) cursorRowCol(counts []int, bottomCells [][]styledCell, bottomLines []string, w int) (int, int) {
+	content := string(m.b.draft)
+	pos := m.b.pos
+	if m.b.inPrompt {
+		content = string(m.b.query)
+		pos = m.b.qpos
+	}
+	runes := []rune(content)
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > len(runes) {
+		pos = len(runes)
+	}
+	off := 0
+	base := 0
+	for i, ln := range bottomLines {
+		n := len([]rune(ln))
+		if pos <= off+n || i == len(bottomLines)-1 {
+			local := pos - off
+			if local < 0 {
+				local = 0
+			}
+			rows := bottomCells[base : base+counts[i]]
+			r, c := cursorPos(rows, local)
+			crow := base + r
+			// Wrap seam: end of a full row means start of the next one.
+			if c == rowWidth(rows[r]) && r+1 < len(rows) {
+				r++
+				c = 0
+				crow = base + r
+			}
+			return crow, c
+		}
+		off += n + 1
+		base += counts[i]
+	}
+	return 0, 0
+}
+
+func rowWidth(cells []styledCell) int {
+	n := 0
+	for _, c := range cells {
+		n += cellWidth(c.r)
+	}
+	return n
+}
+
+func (m teaModel) mark(line string) string {
+	if m.b.checker == nil {
 		return line
 	}
-	return checker.mark(line)
+	return m.b.checker.mark(line)
 }
 
-// tuiLoop runs the full-screen writing prompt.
+// tuiLoop runs the full-screen prompt and returns the outcome.
+// Terminal setup/teardown (raw mode, alt screen) is owned by Bubble Tea.
+// Errors and EOF (pty closed) return unsaved: fail closed, never append
+// unverified bytes.
 func tuiLoop(inFile, outFile *os.File, entries []Entry, nowHeader string, checker *spellChecker) (editResult, error) {
-	state, err := term.MakeRaw(int(inFile.Fd()))
+	m := teaModel{b: newBrowser(entries, nowHeader, checker), width: 80, height: 24}
+	p := tea.NewProgram(m, tea.WithInput(inFile), tea.WithOutput(outFile), tea.WithAltScreen())
+	final, err := p.Run()
 	if err != nil {
 		return editResult{editIdx: -1}, err
 	}
-	defer term.Restore(int(inFile.Fd()), state)
-	fmt.Fprint(outFile, "\x1b[?1049h")
-	defer fmt.Fprint(outFile, "\x1b[?1049l")
-
-	b := newBrowser(entries, nowHeader, checker)
-	r := bufio.NewReader(inFile)
-	for {
-		w, h, err := term.GetSize(int(outFile.Fd()))
-		if err != nil {
-			w, h = 80, 24
-		}
-		render(outFile, b, w, h)
-		k, err := readKey(r, inFile)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return editResult{body: string(b.draft), saved: true, editIdx: editIdxOf(b)}, nil
-			}
-			return editResult{editIdx: -1}, err
-		}
-		switch b.handle(k) {
-		case actSave:
-			return editResult{body: string(b.draft), saved: true, editIdx: editIdxOf(b)}, nil
-		case actDiscard:
-			return editResult{editIdx: -1}, nil
-		}
+	tm, ok := final.(teaModel)
+	if !ok {
+		return editResult{editIdx: -1}, errors.New("unexpected model type")
 	}
-}
-
-func editIdxOf(b *browser) int {
-	if b.editing {
-		return b.editIdx
-	}
-	return -1
+	return tm.result, nil
 }

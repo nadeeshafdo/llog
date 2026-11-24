@@ -1,0 +1,303 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="Electron">
+  <diagram name="0 Flow" id="flow-page">
+    <mxGraphModel dx="1479" dy="979" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="f-title" parent="1" style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;fontSize=16;fontStyle=1;" value="llog TUI key flow (Bubble Tea target: viewport + textarea + help bar)" vertex="1">
+          <mxGeometry x="70" y="30" width="960" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="f-write" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=13;align=center;" value="Write (default)&lt;br&gt;history list + draft" vertex="1">
+          <mxGeometry x="430" y="110" width="240" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="f-search" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=13;align=center;" value="Search prompt&lt;br&gt;live match count" vertex="1">
+          <mxGeometry x="90" y="330" width="240" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="f-matches" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=13;align=center;" value="Match browser&lt;br&gt;Up/Down wraps" vertex="1">
+          <mxGeometry x="430" y="330" width="240" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="f-edit" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=13;align=center;" value="Edit old entry&lt;br&gt;new draft stashed" vertex="1">
+          <mxGeometry x="770" y="330" width="240" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="f-saved" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=13;align=center;" value="Saved, exit 0&lt;br&gt;backup + verify" vertex="1">
+          <mxGeometry x="280" y="580" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="f-discarded" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=13;align=center;" value="Discarded / refused&lt;br&gt;nothing written" vertex="1">
+          <mxGeometry x="580" y="580" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="f-e1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=classic;endFill=1;strokeColor=#6C8EBF;" value="Ctrl+F" source="f-write" target="f-search" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f-e2" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=classic;endFill=1;strokeColor=#6C8EBF;" value="Enter" source="f-search" target="f-matches" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f-e3" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=classic;endFill=1;strokeColor=#6C8EBF;" value="Esc" source="f-search" target="f-write" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f-e4" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=classic;endFill=1;strokeColor=#6C8EBF;" value="Esc" source="f-matches" target="f-write" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f-e5" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=classic;endFill=1;strokeColor=#6C8EBF;" value="Ctrl+S" source="f-matches" target="f-saved" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f-e6" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=classic;endFill=1;strokeColor=#6C8EBF;" value="Ctrl+C" source="f-matches" target="f-discarded" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f-e7" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=classic;endFill=1;strokeColor=#6C8EBF;" value="Ctrl+E" source="f-write" target="f-edit" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f-e8" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=classic;endFill=1;strokeColor=#6C8EBF;" value="Esc (stash restored)" source="f-edit" target="f-write" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f-e9" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=classic;endFill=1;strokeColor=#6C8EBF;" value="Ctrl+S" source="f-edit" target="f-saved" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f-e10" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=classic;endFill=1;strokeColor=#6C8EBF;" value="Ctrl+S" source="f-write" target="f-saved" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f-e11" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=classic;endFill=1;strokeColor=#6C8EBF;" value="Ctrl+C" source="f-write" target="f-discarded" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f-note" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="Layout rule (all screens): lists fill every free row, newest at bottom, focused row highlighted. Input is docked above the help bar and grows downward. No dead space at any terminal height.&lt;br&gt;- Typing is locked in Match browser; Edit restores the stashed draft on Esc.&lt;br&gt;- Edit never touches the date header. Empty body cancels.&lt;br&gt;- Every save: backup first, atomic write, re-read verify. Fingerprint mismatch refuses." vertex="1">
+          <mxGeometry x="90" y="680" width="920" height="130" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="1 Write" id="write-page">
+    <mxGraphModel dx="1479" dy="979" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="s1-title" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=16;fontStyle=1;" value="Screen 1: Write (default) - full-height history list, input docked at bottom" vertex="1">
+          <mxGeometry x="70" y="20" width="900" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-win" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#282A36;strokeColor=#6272A4;fontColor=#F8F8F2;" value="" vertex="1">
+          <mxGeometry x="70" y="60" width="740" height="430" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-bar" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#44475A;strokeColor=none;fontColor=#FFFFFF;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;spacingLeft=12;" value="llog&#160;&#160;2026/11/24 18:30..&#160;&#160;|&#160;&#160;spell on" vertex="1">
+          <mxGeometry x="70" y="60" width="740" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-h1head" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#6272A4;fontFamily=Courier New;" value="[history 140/142] 2026/11/15.." vertex="1">
+          <mxGeometry x="90" y="104" width="700" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-h1body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#6272A4;fontFamily=Courier New;" value="2026/11/15.. watched the Starship catch live on YouTube." vertex="1">
+          <mxGeometry x="90" y="128" width="700" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-h2head" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#6272A4;fontFamily=Courier New;" value="[history 141/142] 2026/11/16.." vertex="1">
+          <mxGeometry x="90" y="156" width="700" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-h2body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#6272A4;fontFamily=Courier New;" value="2026/11/16.. neck sprain. Tesla put rockets on a Roadster." vertex="1">
+          <mxGeometry x="90" y="180" width="700" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-focus" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#44475A;strokeColor=none;" value="" vertex="1">
+          <mxGeometry x="84" y="208" width="712" height="96" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-h3head" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontStyle=1;fontColor=#8BE9FD;fontFamily=Courier New;" value="[history 142/142] 2026/11/17.. (focused, Up/Down moves)" vertex="1">
+          <mxGeometry x="90" y="212" width="700" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-h3body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#F8F8F2;fontFamily=Courier New;" value="2026/11/17.. morning was quiet.&lt;br&gt;Worked on MediConnect again, backend first.&lt;br&gt;Still need to fix teh login flow." vertex="1">
+          <mxGeometry x="90" y="236" width="700" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-div" parent="1" style="shape=line;strokeColor=#6272A4;html=1;" value="" vertex="1">
+          <mxGeometry x="90" y="310" width="700" height="8" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-dhead" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontStyle=1;fontColor=#8BE9FD;fontFamily=Courier New;" value="-- new entry --" vertex="1">
+          <mxGeometry x="90" y="322" width="700" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-dbody" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#F8F8F2;fontFamily=Courier New;" value="Today I finally fixed the Esc bug. It was the read deadline.&lt;br&gt;Now the poll-based detect works." vertex="1">
+          <mxGeometry x="90" y="346" width="700" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-cursor" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F8F8F2;strokeColor=none;" value="" vertex="1">
+          <mxGeometry x="307" y="370" width="9" height="17" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-foot" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#44475A;strokeColor=none;fontColor=#F8F8F2;fontSize=11;align=left;verticalAlign=middle;spacingLeft=12;fontFamily=Courier New;" value="Enter newline | Left/Right/Home/End move | Up/Down history | Ctrl+F search | Ctrl+E edit | Tab fix | Ctrl+A word | Ctrl+S save | Ctrl+C discard" vertex="1">
+          <mxGeometry x="70" y="452" width="740" height="38" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-n1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="Bubble Tea mapping: viewport fills every row above the input. Newest entries bottom-up, focused row highlighted. Cursor moves with Left/Right/Home/End (Up/Down browses); textarea docked above help bar." vertex="1">
+          <mxGeometry x="70" y="510" width="740" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="s1-n2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="Draft is never lost: browsing only moves focus in the list. Red underline comes from a styled span. Autocorrect fires on word boundary, Backspace undoes." vertex="1">
+          <mxGeometry x="70" y="610" width="740" height="70" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="2 Search" id="search-page">
+    <mxGraphModel dx="1479" dy="979" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="s2-title" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=16;fontStyle=1;" value="Screen 2: Search prompt (Ctrl+F) - match list fills the pane, query docked" vertex="1">
+          <mxGeometry x="70" y="20" width="900" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-win" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#282A36;strokeColor=#6272A4;fontColor=#F8F8F2;" value="" vertex="1">
+          <mxGeometry x="70" y="60" width="740" height="430" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-bar" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#44475A;strokeColor=none;fontColor=#FFFFFF;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;spacingLeft=12;" value="llog&#160;&#160;2026/11/24 18:30..&#160;&#160;|&#160;&#160;spell on" vertex="1">
+          <mxGeometry x="70" y="60" width="740" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-hhead" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontStyle=1;fontColor=#8BE9FD;fontFamily=Courier New;" value="-- search: church (2 matches, Enter to browse, Esc cancel)" vertex="1">
+          <mxGeometry x="90" y="104" width="700" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-m1head" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#6272A4;fontFamily=Courier New;" value="[1/2] 2026/05/02.." vertex="1">
+          <mxGeometry x="90" y="130" width="700" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-m1body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#6272A4;fontFamily=Courier New;" value="2026/05/02.. thunder storm at night, lost ceiling lights." vertex="1">
+          <mxGeometry x="90" y="154" width="700" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-focus" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#44475A;strokeColor=none;" value="" vertex="1">
+          <mxGeometry x="84" y="182" width="712" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-m2head" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontStyle=1;fontColor=#8BE9FD;fontFamily=Courier New;" value="[2/2] 2026/05/03.. (newest match, live preview)" vertex="1">
+          <mxGeometry x="90" y="186" width="700" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-m2body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#F8F8F2;fontFamily=Courier New;" value="2026/05/03.. went to the Maggona church for Sunday feast.&lt;br&gt;First visit in a month. Woke up early.&lt;br&gt;Started MediConnect backend again, SQLite this time.&lt;br&gt;Hope this is the one that sticks." vertex="1">
+          <mxGeometry x="90" y="210" width="700" height="88" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-div" parent="1" style="shape=line;strokeColor=#6272A4;html=1;" value="" vertex="1">
+          <mxGeometry x="90" y="328" width="700" height="8" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-dhead" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontStyle=1;fontColor=#8BE9FD;fontFamily=Courier New;" value="-- type query, Enter to browse --" vertex="1">
+          <mxGeometry x="90" y="340" width="700" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-dbody" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#F8F8F2;fontFamily=Courier New;" value="search: church" vertex="1">
+          <mxGeometry x="90" y="364" width="700" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-cursor" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F8F8F2;strokeColor=none;" value="" vertex="1">
+          <mxGeometry x="195" y="366" width="9" height="17" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-foot" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#44475A;strokeColor=none;fontColor=#F8F8F2;fontSize=11;align=left;verticalAlign=middle;spacingLeft=12;fontFamily=Courier New;" value="Type query | Enter browse | Esc cancel | Left/Right/Home/End move" vertex="1">
+          <mxGeometry x="70" y="452" width="740" height="38" as="geometry" />
+        </mxCell>
+        <mxCell id="s2-n1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="Bubble Tea mapping: a textinput for the query with its own cursor. Every keystroke re-filters entries; the list above shows all matches newest-first with the focused one expanded." vertex="1">
+          <mxGeometry x="70" y="510" width="740" height="80" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="3 Matches" id="matches-page">
+    <mxGraphModel dx="1479" dy="979" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="s3-title" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=16;fontStyle=1;" value="Screen 3: Match browser - same full-height list, draft locked at bottom" vertex="1">
+          <mxGeometry x="70" y="20" width="900" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-win" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#282A36;strokeColor=#6272A4;fontColor=#F8F8F2;" value="" vertex="1">
+          <mxGeometry x="70" y="60" width="740" height="430" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-bar" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#44475A;strokeColor=none;fontColor=#FFFFFF;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;spacingLeft=12;" value="llog&#160;&#160;2026/11/24 18:30..&#160;&#160;|&#160;&#160;spell on" vertex="1">
+          <mxGeometry x="70" y="60" width="740" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-hhead" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontStyle=1;fontColor=#8BE9FD;fontFamily=Courier New;" value="[search 2/2] 2026/05/03.. (Up/Down wraps, Esc back)" vertex="1">
+          <mxGeometry x="90" y="104" width="700" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-m1head" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#6272A4;fontFamily=Courier New;" value="[1/2] 2026/05/02.." vertex="1">
+          <mxGeometry x="90" y="130" width="700" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-m1body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#6272A4;fontFamily=Courier New;" value="2026/05/02.. thunder storm at night, lost ceiling lights." vertex="1">
+          <mxGeometry x="90" y="154" width="700" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-focus" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#44475A;strokeColor=none;" value="" vertex="1">
+          <mxGeometry x="84" y="182" width="712" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-m2head" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontStyle=1;fontColor=#8BE9FD;fontFamily=Courier New;" value="[2/2] 2026/05/03.. (focused)" vertex="1">
+          <mxGeometry x="90" y="186" width="700" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-m2body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#F8F8F2;fontFamily=Courier New;" value="2026/05/03.. went to the Maggona church for Sunday feast.&lt;br&gt;First visit in a month. Woke up early.&lt;br&gt;Started MediConnect backend again, SQLite this time.&lt;br&gt;Hope this is the one that sticks." vertex="1">
+          <mxGeometry x="90" y="210" width="700" height="88" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-div" parent="1" style="shape=line;strokeColor=#6272A4;html=1;" value="" vertex="1">
+          <mxGeometry x="90" y="328" width="700" height="8" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-dhead" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#6272A4;fontFamily=Courier New;" value="-- new entry (locked: Esc to write) --" vertex="1">
+          <mxGeometry x="90" y="340" width="700" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-dbody" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#6272A4;fontFamily=Courier New;" value="Today I finally fixed the Esc bug. (kept, not editable here)" vertex="1">
+          <mxGeometry x="90" y="364" width="700" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-foot" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#44475A;strokeColor=none;fontColor=#F8F8F2;fontSize=11;align=left;verticalAlign=middle;spacingLeft=12;fontFamily=Courier New;" value="Up/Down matches | Esc write | Ctrl+S save | Ctrl+C discard" vertex="1">
+          <mxGeometry x="70" y="452" width="740" height="38" as="geometry" />
+        </mxCell>
+        <mxCell id="s3-n1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="Bubble Tea mapping: same viewport component, cursor over match indexes. Textarea is blurred (locked) so keystrokes cannot edit the draft by accident. List region keeps its full height, so focus position never jumps." vertex="1">
+          <mxGeometry x="70" y="510" width="740" height="80" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="4 Edit" id="edit-page">
+    <mxGraphModel dx="1479" dy="979" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="s4-title" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=16;fontStyle=1;" value="Screen 4: Edit old entry (Ctrl+E) - editing fills the pane, stash collapsed" vertex="1">
+          <mxGeometry x="70" y="20" width="900" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="s4-win" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#282A36;strokeColor=#6272A4;fontColor=#F8F8F2;" value="" vertex="1">
+          <mxGeometry x="70" y="60" width="740" height="430" as="geometry" />
+        </mxCell>
+        <mxCell id="s4-bar" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#44475A;strokeColor=none;fontColor=#FFFFFF;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;spacingLeft=12;" value="llog&#160;&#160;2026/11/24 18:30..&#160;&#160;|&#160;&#160;spell on" vertex="1">
+          <mxGeometry x="70" y="60" width="740" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="s4-hhead" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontStyle=1;fontColor=#FFB86C;fontFamily=Courier New;" value="[editing 140/142] 2026/05/03.. (header locked)" vertex="1">
+          <mxGeometry x="90" y="104" width="700" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="s4-hbody" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#F8F8F2;fontFamily=Courier New;" value="went to the Maggona church for Sunday feast.&lt;br&gt;First visit in a month. Woke up early.&lt;br&gt;Started MediConnect backend again.&lt;br&gt;Fixed teh typo in the notes.&lt;br&gt;Need to call grandma tomorrow.&lt;br&gt;Buy milk on the way back.&lt;br&gt;Rain holding off so far.&lt;br&gt;Early night today." vertex="1">
+          <mxGeometry x="90" y="130" width="700" height="176" as="geometry" />
+        </mxCell>
+        <mxCell id="s4-cursor" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F8F8F2;strokeColor=none;" value="" vertex="1">
+          <mxGeometry x="280" y="289" width="9" height="17" as="geometry" />
+        </mxCell>
+        <mxCell id="s4-div" parent="1" style="shape=line;strokeColor=#6272A4;html=1;" value="" vertex="1">
+          <mxGeometry x="90" y="312" width="700" height="8" as="geometry" />
+        </mxCell>
+        <mxCell id="s4-dhead" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#6272A4;fontFamily=Courier New;" value="-- stashed new entry (Esc restores, nothing lost) --" vertex="1">
+          <mxGeometry x="90" y="324" width="700" height="22" as="geometry" />
+        </mxCell>
+        <mxCell id="s4-dbody" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#6272A4;fontFamily=Courier New;" value="Today I finally fixed the Esc bug. ..." vertex="1">
+          <mxGeometry x="90" y="348" width="700" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="s4-foot" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#44475A;strokeColor=none;fontColor=#F8F8F2;fontSize=11;align=left;verticalAlign=middle;spacingLeft=12;fontFamily=Courier New;" value="Type | Arrows/Home/End move | Tab fix | Ctrl+A word | Ctrl+S saves | Esc cancels (no save)" vertex="1">
+          <mxGeometry x="70" y="452" width="740" height="38" as="geometry" />
+        </mxCell>
+        <mxCell id="s4-n1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="Bubble Tea mapping: editing area keeps full height; the cursor moves freely with arrows and Home/End. Stashed draft renders as one dimmed line; Esc restores it with its cursor. Ctrl+E is ignored while already editing. Empty body cancels the edit." vertex="1">
+          <mxGeometry x="70" y="510" width="740" height="80" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="5 Save and errors" id="save-page">
+    <mxGraphModel dx="1479" dy="979" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="s5-title" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=16;fontStyle=1;" value="Screen 5: Save, verify, refusals - backup-first, fingerprint-checked, lock-guarded" vertex="1">
+          <mxGeometry x="70" y="20" width="900" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-a-label" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;spacingLeft=12;" value="A. Save new entry (Ctrl+S, exit 0)" vertex="1">
+          <mxGeometry x="70" y="60" width="740" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-a-body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#333333;fontFamily=Courier New;" value="1. backup LOG.TXT to llog-backups/LOG.TXT.&amp;lt;timestamp&amp;gt;.bak (hash-verified)&lt;br&gt;2. append + fsync + re-read: old bytes unchanged, new entry present&lt;br&gt;3. print: saved to .../LOG.TXT (backup: ...)" vertex="1">
+          <mxGeometry x="90" y="100" width="700" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-b-label" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;spacingLeft=12;" value="B. Save edit (Ctrl+S in edit mode, exit 0)" vertex="1">
+          <mxGeometry x="70" y="190" width="740" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-b-body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#333333;fontFamily=Courier New;" value="1. backup first (same as A)&lt;br&gt;2. atomic rewrite: temp file + fsync + rename + dir fsync&lt;br&gt;3. verify: entry count same, every other entry byte-identical&lt;br&gt;4. print: edited 2026/05/03.. (backup: ...)" vertex="1">
+          <mxGeometry x="90" y="230" width="700" height="92" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-c-label" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;spacingLeft=12;" value="C. Refusals (nothing written)" vertex="1">
+          <mxGeometry x="70" y="342" width="740" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-c-body" parent="1" style="text;html=1;whiteSpace=wrap;align=left;fontSize=12;fontColor=#333333;fontFamily=Courier New;" value="card not mounted: cannot read log (is the card mounted?)&lt;br&gt;empty file: refusing to write&lt;br&gt;fingerprint changed: edited elsewhere, refusing (append and edit)&lt;br&gt;empty entry or empty edit: nothing written / cancelled&lt;br&gt;identical edit text: no changes, nothing written&lt;br&gt;concurrent writers: LOG.TXT.lock held (flock) for whole read-modify-write" vertex="1">
+          <mxGeometry x="90" y="382" width="700" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="s5-n1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="Bubble Tea mapping: these are not interactive screens. The update function returns a save command on Ctrl+S; the result (or refusal) prints after the alt screen exits. Keep all file I/O in store.go, never in the view layer." vertex="1">
+          <mxGeometry x="70" y="542" width="740" height="90" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
