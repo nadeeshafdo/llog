@@ -426,7 +426,11 @@ func (b *browser) addWord() {
 		b.status = "spell check is off"
 		return
 	}
-	word, _ := trailingWord(b.draft)
+	pos := b.pos
+	if pos > len(b.draft) {
+		pos = len(b.draft)
+	}
+	word, _ := trailingWord(b.draft[:pos])
 	if normalizeWord(word) == "" {
 		b.status = "no word to add (move after a word)"
 		return
