@@ -11,36 +11,48 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type e2eOutcome struct {
+	res editResult
+	err error
+}
+
+func openTestPty(t *testing.T) (master, slave *os.File) {
+	t.Helper()
+	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+	if err != nil {
+		t.Skipf("no ptmx: %v", err)
+	}
+	if err := unix.IoctlSetPointerInt(int(master.Fd()), unix.TIOCSPTLCK, 0); err != nil {
+		master.Close()
+		t.Skipf("unlockpt: %v", err)
+	}
+	ptn, err := unix.IoctlGetInt(int(master.Fd()), unix.TIOCGPTN)
+	if err != nil {
+		master.Close()
+		t.Skipf("getptn: %v", err)
+	}
+	slave, err = os.OpenFile("/dev/pts/"+strconv.Itoa(ptn), os.O_RDWR, 0)
+	if err != nil {
+		master.Close()
+		t.Skipf("open slave: %v", err)
+	}
+	return master, slave
+}
+
 // TestTuiLoopEndToEnd drives the real Tea program through a pty: it waits
 // for the first rendered frame, types text, saves with Ctrl+S, and checks
 // the result. Piped input cannot do this faithfully because startup input
 // races terminal detection.
 func TestTuiLoopEndToEnd(t *testing.T) {
-	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
-	if err != nil {
-		t.Skipf("no ptmx: %v", err)
-	}
+	master, slave := openTestPty(t)
 	defer master.Close()
-	if err := unix.IoctlSetPointerInt(int(master.Fd()), unix.TIOCSPTLCK, 0); err != nil {
-		t.Skipf("unlockpt: %v", err)
-	}
-	ptn, err := unix.IoctlGetInt(int(master.Fd()), unix.TIOCGPTN)
-	if err != nil {
-		t.Skipf("getptn: %v", err)
-	}
-	slave, err := os.OpenFile("/dev/pts/"+strconv.Itoa(ptn), os.O_RDWR, 0)
-	if err != nil {
-		t.Skipf("open slave: %v", err)
-	}
 	defer slave.Close()
 
 	t.Setenv("TERM", "xterm-256color")
 
 	var mu sync.Mutex
 	var transcript strings.Builder
-	done := make(chan struct{})
 	go func() {
-		defer close(done)
 		buf := make([]byte, 4096)
 		for {
 			n, err := master.Read(buf)
@@ -55,35 +67,30 @@ func TestTuiLoopEndToEnd(t *testing.T) {
 		}
 	}()
 
-	type outcome struct {
-		res editResult
-		err error
-	}
-	resCh := make(chan outcome, 1)
+	resCh := make(chan e2eOutcome, 1)
 	go func() {
 		entries := []Entry{
 			{Header: "2002..", Text: "2002.. first memory"},
 			{Header: "2026/11/17..", Text: "2026/11/17.."},
 		}
 		res, err := tuiLoop(slave, slave, entries, "2026/11/24 18:30..", nil)
-		resCh <- outcome{res, err}
+		resCh <- e2eOutcome{res, err}
 	}()
 
-	waitFor := func(what string) {
-		deadline := time.Now().Add(10 * time.Second)
-		for time.Now().Before(deadline) {
-			mu.Lock()
-			found := strings.Contains(transcript.String(), what)
-			mu.Unlock()
-			if found {
-				return
-			}
-			time.Sleep(50 * time.Millisecond)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		found := strings.Contains(transcript.String(), "-- new entry --")
+		mu.Unlock()
+		if found {
+			break
 		}
-		t.Fatalf("timed out waiting for %q in transcript", what)
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for first frame")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 
-	waitFor("-- new entry --")
 	if _, err := master.Write([]byte("hello tui")); err != nil {
 		t.Fatal(err)
 	}
@@ -110,3 +117,9 @@ func TestTuiLoopEndToEnd(t *testing.T) {
 		t.Fatal("timed out waiting for save")
 	}
 }
+
+// Note: terminal death mid-session (pty closed, SSH drop) is owned by the
+// process lifecycle (SIGHUP kills the process). Bubble Tea may block on a
+// dead terminal instead of returning; no write can happen without an
+// explicit save key, so the log stays untouched. Tested manually, not in CI
+// because it hangs the suite by design.

@@ -288,6 +288,87 @@ func TestUpdateSaveQuits(t *testing.T) {
 	}
 }
 
+func TestKeyFromMsgDelete(t *testing.T) {
+	got := keyFromMsg(tea.KeyMsg{Type: tea.KeyDelete})
+	if len(got) != 1 || got[0].kind != kBackspace {
+		t.Fatalf("delete gave %v, want backspace", got)
+	}
+	m := testModel(nil)
+	m = sendKeys(m, runeMsgs("ab")...)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDelete})
+	m = updated.(teaModel)
+	if string(m.b.draft) != "a" {
+		t.Fatalf("delete should erase, draft=%q", string(m.b.draft))
+	}
+}
+
+func TestUpdateIgnoresLeftRight(t *testing.T) {
+	m := testModel(nil)
+	m = sendKeys(m, runeMsgs("ab")...)
+	before := string(m.b.draft)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m = updated.(teaModel)
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = updated.(teaModel)
+	if cmd != nil {
+		t.Fatal("arrows should not quit")
+	}
+	if string(m.b.draft) != before {
+		t.Fatalf("arrows moved draft: %q", string(m.b.draft))
+	}
+}
+
+func TestUpdateSaveFromSearch(t *testing.T) {
+	m := testModel(nil)
+	m = sendKeys(m,
+		tea.KeyMsg{Type: tea.KeyCtrlF},
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}},
+		tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}},
+		tea.KeyMsg{Type: tea.KeyEnter},
+	)
+	if !m.b.inSearch {
+		t.Fatal("should be in search view")
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(teaModel)
+	if cmd == nil || !m.result.saved || m.result.editIdx != -1 {
+		t.Fatalf("search save wrong: cmd=%v result=%+v", cmd, m.result)
+	}
+}
+
+func TestUpdateSaveFromEdit(t *testing.T) {
+	m := testModel(nil)
+	m = sendKeys(m, tea.KeyMsg{Type: tea.KeyCtrlE})
+	if !m.b.editing {
+		t.Fatal("should be editing")
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(teaModel)
+	if cmd == nil || !m.result.saved || m.result.editIdx != m.b.editIdx {
+		t.Fatalf("edit save wrong: cmd=%v result=%+v", cmd, m.result)
+	}
+}
+
+func TestUpdateSaveInPromptIgnored(t *testing.T) {
+	m := testModel(nil)
+	m = sendKeys(m, tea.KeyMsg{Type: tea.KeyCtrlF})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(teaModel)
+	if cmd != nil {
+		t.Fatal("ctrl-s in prompt should not quit")
+	}
+	if !m.b.inPrompt {
+		t.Fatal("should stay in prompt")
+	}
+}
+
+func TestKeyFromMsgPasteTab(t *testing.T) {
+	got := keyFromMsg(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a', '\t', 'b'}})
+	if len(got) != 3 || got[0].kind != kRune || got[1].kind != kTab || got[2].kind != kRune {
+		t.Fatalf("paste with tab gave %v", got)
+	}
+}
+
 func editTestChecker() *spellChecker {
 	sc := testChecker()
 	sc.customPath = ""

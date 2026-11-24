@@ -423,7 +423,7 @@ func keyFromMsg(msg tea.KeyMsg) []key {
 	switch msg.Type {
 	case tea.KeyEnter:
 		return one(kEnter)
-	case tea.KeyBackspace:
+	case tea.KeyBackspace, tea.KeyDelete:
 		return one(kBackspace)
 	case tea.KeyTab:
 		return one(kTab)
@@ -587,6 +587,9 @@ func (m teaModel) mark(line string) string {
 }
 
 // tuiLoop runs the full-screen prompt and returns the outcome.
+// Terminal setup/teardown (raw mode, alt screen) is owned by Bubble Tea.
+// Errors and EOF (pty closed) return unsaved: fail closed, never append
+// unverified bytes.
 func tuiLoop(inFile, outFile *os.File, entries []Entry, nowHeader string, checker *spellChecker) (editResult, error) {
 	m := teaModel{b: newBrowser(entries, nowHeader, checker), width: 80, height: 24}
 	p := tea.NewProgram(m, tea.WithInput(inFile), tea.WithOutput(outFile), tea.WithAltScreen())
