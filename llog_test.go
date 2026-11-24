@@ -12,6 +12,99 @@ import (
 
 var fixedNow = time.Date(2026, 11, 19, 18, 30, 0, 0, time.Local)
 
+func TestVersionFlag(t *testing.T) {
+	for _, args := range [][]string{{"--version"}, {"-v"}} {
+		dir := t.TempDir()
+		logPath := filepath.Join(dir, "LOG.TXT")
+		mustWrite(t, logPath, "start\n")
+		t.Setenv("LLOG_FILE", logPath)
+		t.Setenv("LLOG_BACKUP_DIR", filepath.Join(dir, "backups"))
+
+		var stdout, stderr bytes.Buffer
+		if err := run(args, strings.NewReader(""), &stdout, &stderr); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if stdout.String() != "llog "+appVersion+"\n" {
+			t.Fatalf("%v printed %q", args, stdout.String())
+		}
+		if got := mustRead(t, logPath); got != "start\n" {
+			t.Fatalf("%v wrote to the log: %q", args, got)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "backups")); !os.IsNotExist(err) {
+			t.Fatalf("%v must not create backups", args)
+		}
+	}
+}
+
+func TestHelpFlag(t *testing.T) {
+	for _, args := range [][]string{{"-h"}, {"--help"}} {
+		dir := t.TempDir()
+		logPath := filepath.Join(dir, "LOG.TXT")
+		mustWrite(t, logPath, "start\n")
+		t.Setenv("LLOG_FILE", logPath)
+		t.Setenv("LLOG_BACKUP_DIR", filepath.Join(dir, "backups"))
+
+		var stdout, stderr bytes.Buffer
+		if err := run(args, strings.NewReader(""), &stdout, &stderr); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if !strings.HasPrefix(stdout.String(), "usage:") {
+			t.Fatalf("%v printed %q", args, stdout.String())
+		}
+		if got := mustRead(t, logPath); got != "start\n" {
+			t.Fatalf("%v wrote to the log: %q", args, got)
+		}
+	}
+}
+
+func TestBareWordsJournal(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"help"}, "help\n"},
+		{[]string{"version"}, "version\n"},
+		{[]string{"went", "-v", "home"}, "went -v home\n"},
+		{[]string{"--", "--version"}, "--version\n"},
+		{[]string{"--", "-v", "x"}, "-v x\n"},
+	} {
+		dir := t.TempDir()
+		logPath := filepath.Join(dir, "LOG.TXT")
+		mustWrite(t, logPath, "start\n")
+		t.Setenv("LLOG_FILE", logPath)
+		t.Setenv("LLOG_BACKUP_DIR", filepath.Join(dir, "backups"))
+
+		var stdout, stderr bytes.Buffer
+		if err := run(tc.args, strings.NewReader(""), &stdout, &stderr); err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		if got := mustRead(t, logPath); !strings.HasSuffix(got, tc.want) {
+			t.Fatalf("%v gave %q, want suffix %q", tc.args, got, tc.want)
+		}
+	}
+}
+
+func TestUnknownFlagRefused(t *testing.T) {
+	for _, args := range [][]string{{"--foo"}, {"-x"}, {"--"}, {"-v", "extra"}, {"-h", "extra"}} {
+		dir := t.TempDir()
+		logPath := filepath.Join(dir, "LOG.TXT")
+		mustWrite(t, logPath, "start\n")
+		t.Setenv("LLOG_FILE", logPath)
+		t.Setenv("LLOG_BACKUP_DIR", filepath.Join(dir, "backups"))
+
+		var stdout, stderr bytes.Buffer
+		if err := run(args, strings.NewReader(""), &stdout, &stderr); err == nil {
+			t.Fatalf("%v should fail", args)
+		}
+		if got := mustRead(t, logPath); got != "start\n" {
+			t.Fatalf("%v changed the log: %q", args, got)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "backups")); !os.IsNotExist(err) {
+			t.Fatalf("%v must not create backups", args)
+		}
+	}
+}
+
 func TestNewEntry(t *testing.T) {
 	if got := newEntry(fixedNow, "hello"); got != "2026/11/19 18:30.. hello" {
 		t.Fatalf("got %q", got)
