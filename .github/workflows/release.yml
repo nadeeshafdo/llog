@@ -1,0 +1,73 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64, archive: tar.gz}
+          - {goos: linux, goarch: arm64, archive: tar.gz}
+          - {goos: darwin, goarch: amd64, archive: tar.gz}
+          - {goos: darwin, goarch: arm64, archive: tar.gz}
+          - {goos: windows, goarch: amd64, archive: zip}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          BIN=llog
+          [ "$GOOS" = windows ] && BIN=llog.exe
+          go build -trimpath \
+            -ldflags "-s -w -X main.appVersion=${GITHUB_REF_NAME} -X main.appCommit=${GITHUB_SHA::7} -X main.appDate=$(date -u +%F)" \
+            -o "$BIN" .
+          if [ "${{ matrix.archive }}" = zip ]; then
+            zip "llog-${GOOS}-${GOARCH}.zip" "$BIN"
+          else
+            tar -czf "llog-${GOOS}-${GOARCH}.tar.gz" "$BIN"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llog-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: llog-*.{tar.gz,zip}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: checksums
+        run: sha256sum llog-*.tar.gz llog-*.zip > SHA256SUMS
+      - name: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${GITHUB_REF_NAME}" --generate-notes llog-*.tar.gz llog-*.zip SHA256SUMS

@@ -24,7 +24,18 @@ llog "quick note"    # append a one-line entry (any text not starting with -)
 llog -- "text"       # append text starting with - literally
 llog -h              # show usage
 llog -v              # show version (tag, commit, date)
+llog --update        # update to the latest release (needs GH_TOKEN)
 ```
+
+## Updating
+
+Releases live on the [releases page](https://github.com/nadeeshafdo/llog/releases),
+built automatically for Linux, macOS and Windows when a `v*` tag is pushed.
+`llog --update` fetches the newest release for your platform, verifies its
+SHA256 checksum, keeps your current binary as `llog.bak`, and swaps in the
+new one. The repo is private, so set `GH_TOKEN` (or `GITHUB_TOKEN`) with
+`repo` scope first. Nothing else on your machine, and never your log file,
+is touched by an update. On Windows self-update is not supported yet.
 
 Entries look like this:
 
