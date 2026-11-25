@@ -26,10 +26,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {goos: linux, goarch: amd64, archive: tar.gz}
-          - {goos: linux, goarch: arm64, archive: tar.gz}
-          - {goos: darwin, goarch: amd64, archive: tar.gz}
-          - {goos: darwin, goarch: arm64, archive: tar.gz}
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: darwin, goarch: amd64}
+          - {goos: darwin, goarch: arm64}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -43,17 +43,11 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          BIN=llog
-          [ "$GOOS" = windows ] && BIN=llog.exe
           go build -trimpath \
             -ldflags "-s -w -X main.appVersion=${GITHUB_REF_NAME} -X main.appCommit=${GITHUB_SHA::7} -X main.appDate=$(date -u +%F)" \
-            -o "$BIN" .
-          if [ "${{ matrix.archive }}" = zip ]; then
-            zip "llog-${GOOS}-${GOARCH}.zip" "$BIN"
-          else
-            tar -czf "llog-${GOOS}-${GOARCH}.tar.gz" "$BIN"
-          fi
-          sha256sum "llog-${GOOS}-${GOARCH}".* > "llog-${GOOS}-${GOARCH}.sha256"
+            -o llog .
+          tar -czf "llog-${GOOS}-${GOARCH}.tar.gz" llog
+          sha256sum "llog-${GOOS}-${GOARCH}.tar.gz" > "llog-${GOOS}-${GOARCH}.sha256"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: llog-${{ matrix.goos }}-${{ matrix.goarch }}
