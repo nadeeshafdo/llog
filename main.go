@@ -64,9 +64,10 @@ func run(args []string, in io.Reader, stdout, stderr io.Writer) error {
 		logPath := envOr("LLOG_FILE", defaultLogPath)
 		return runConfig(in, stderr, authPathFor(logPath))
 	}
-	// Only four flags exist: -h, --help, -v, --version. Anything starting
-	// with - is a flag, so a typo can never silently become a journal
-	// entry. Use -- to journal text that starts with a dash.
+	// Flag vocabulary is fixed: -h, --help, -v, --version, --update,
+	// --config. Anything else starting with - is rejected, so a typo
+	// can never silently become a journal entry. Use -- to journal text
+	// that starts with a dash.
 	if args[0] == "--" {
 		if len(args) < 2 {
 			return errors.New(`no entry text after "--" (see llog -h)`)
