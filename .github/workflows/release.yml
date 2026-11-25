@@ -1,0 +1,79 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -count=1 ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64, archive: tar.gz}
+          - {goos: linux, goarch: arm64, archive: tar.gz}
+          - {goos: darwin, goarch: amd64, archive: tar.gz}
+          - {goos: darwin, goarch: arm64, archive: tar.gz}
+          - {goos: windows, goarch: amd64, archive: zip}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - name: build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          BIN=llog
+          [ "$GOOS" = windows ] && BIN=llog.exe
+          go build -trimpath \
+            -ldflags "-s -w -X main.appVersion=${GITHUB_REF_NAME} -X main.appCommit=${GITHUB_SHA::7} -X main.appDate=$(date -u +%F)" \
+            -o "$BIN" .
+          if [ "${{ matrix.archive }}" = zip ]; then
+            zip "llog-${GOOS}-${GOARCH}.zip" "$BIN"
+          else
+            tar -czf "llog-${GOOS}-${GOARCH}.tar.gz" "$BIN"
+          fi
+          sha256sum "llog-${GOOS}-${GOARCH}".* > "llog-${GOOS}-${GOARCH}.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: llog-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: llog-*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          merge-multiple: true
+      - name: verify build-time checksums
+        run: sha256sum -c llog-*.sha256
+      - name: checksums
+        run: sha256sum llog-*.tar.gz llog-*.zip > SHA256SUMS
+      - name: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${GITHUB_REF_NAME}" --generate-notes llog-*.tar.gz llog-*.zip SHA256SUMS

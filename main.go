@@ -20,6 +20,7 @@ const usage = `usage:
   llog -- "text"       append text starting with - literally
   llog -h              show this help
   llog -v              show version
+  llog --update        update to the latest release (needs GH_TOKEN)
 
 keys while writing:
   Type to write; Left/Right/Home/End move the cursor anywhere
@@ -46,6 +47,12 @@ func main() {
 func run(args []string, in io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return interactive(in, stderr)
+	}
+	if args[0] == "--update" {
+		if len(args) > 1 {
+			return fmt.Errorf("flag --update takes no arguments (see llog -h)")
+		}
+		return runUpdate(stderr)
 	}
 	// Only four flags exist: -h, --help, -v, --version. Anything starting
 	// with - is a flag, so a typo can never silently become a journal
