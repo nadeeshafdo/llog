@@ -5,14 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
-)
-
-const (
-	defaultLogPath   = "/media/nadeeshafdo/nadeeshafdo/LOG.TXT"
-	defaultBackupDir = "/media/nadeeshafdo/nadeeshafdo/llog-backups"
 )
 
 const usage = `usage:
@@ -21,8 +15,8 @@ const usage = `usage:
   llog -- "text"       append text starting with - literally
   llog -h              show this help
   llog -v              show version (tag, commit, date)
-  llog --update        update to the latest release (needs token, see --config)
-  llog --config        save the GitHub token next to LOG.TXT (input hidden)
+  llog --update        update to the latest release (needs token, see below)
+  llog --config        show where the update token comes from
 
 keys while writing:
   Type to write; Left/Right/Home/End move the cursor anywhere
@@ -33,10 +27,11 @@ keys while writing:
   Ctrl+C discard, Backspace right after an autocorrect undoes it
 
 environment:
-  LLOG_FILE            path to LOG.TXT (default ` + defaultLogPath + `)
-  LLOG_BACKUP_DIR      backup folder (default ` + defaultBackupDir + `)
+  LLOG_FILE            path to LOG.TXT (default ~/LOG.TXT)
+  LLOG_BACKUP_DIR      backup folder (default ~/llog-backups)
   LLOG_DICT            spell dictionary path (default system hunspell)
   LLOG_AUTOCORRECT=0   disable autocorrect (spell underline stays)
+  GH_TOKEN / GITHUB_TOKEN  release token, or login with "gh auth login"
 `
 
 func main() {
@@ -54,15 +49,14 @@ func run(args []string, in io.Reader, stdout, stderr io.Writer) error {
 		if len(args) > 1 {
 			return fmt.Errorf("flag --update takes no arguments (see llog -h)")
 		}
-		logPath := envOr("LLOG_FILE", defaultLogPath)
-		return runUpdate(stderr, authPathFor(logPath))
+		return runUpdate(stderr)
 	}
 	if args[0] == "--config" {
 		if len(args) > 1 {
 			return fmt.Errorf("flag --config takes no arguments (see llog -h)")
 		}
-		logPath := envOr("LLOG_FILE", defaultLogPath)
-		return runConfig(in, stderr, authPathFor(logPath))
+		fmt.Fprintln(stderr, "update token: GH_TOKEN or GITHUB_TOKEN, else \"gh auth login\" (no token file is used)")
+		return nil
 	}
 	// Flag vocabulary is fixed: -h, --help, -v, --version, --update,
 	// --config. Anything else starting with - is rejected, so a typo
@@ -97,11 +91,11 @@ func run(args []string, in io.Reader, stdout, stderr io.Writer) error {
 
 func interactive(in io.Reader, out io.Writer) error {
 	now := time.Now()
-	logPath := envOr("LLOG_FILE", defaultLogPath)
-	backupDir := envOr("LLOG_BACKUP_DIR", defaultBackupDir)
+	logPath := envOr("LLOG_FILE", defaultLogPath())
+	backupDir := envOr("LLOG_BACKUP_DIR", defaultBackupDir())
 	data, err := os.ReadFile(logPath)
 	if err != nil {
-		return fmt.Errorf("cannot read log (is the card mounted?): %w", err)
+		return fmt.Errorf("cannot read log (check LLOG_FILE path?): %w", err)
 	}
 	if len(data) == 0 {
 		return errors.New("log file is empty, refusing to write")
@@ -166,8 +160,8 @@ func save(entry string, out io.Writer) error {
 		fmt.Fprintln(out, "nothing written, entry was empty")
 		return nil
 	}
-	logPath := envOr("LLOG_FILE", defaultLogPath)
-	backupDir := envOr("LLOG_BACKUP_DIR", defaultBackupDir)
+	logPath := envOr("LLOG_FILE", defaultLogPath())
+	backupDir := envOr("LLOG_BACKUP_DIR", defaultBackupDir())
 
 	backupPath, err := appendEntry(logPath, backupDir, entry)
 	if err != nil {
@@ -184,7 +178,20 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// authPathFor locates the token file in the same storage as the log.
-func authPathFor(logPath string) string {
-	return filepath.Join(filepath.Dir(logPath), "auth.json")
+// defaultLogPath is ~/LOG.TXT, falling back to the working directory
+// when the home directory is unknown. Override with LLOG_FILE.
+func defaultLogPath() string {
+	if h, err := os.UserHomeDir(); err == nil && h != "" {
+		return h + "/LOG.TXT"
+	}
+	return "LOG.TXT"
+}
+
+// defaultBackupDir is ~/llog-backups, falling back to the working
+// directory. Override with LLOG_BACKUP_DIR.
+func defaultBackupDir() string {
+	if h, err := os.UserHomeDir(); err == nil && h != "" {
+		return h + "/llog-backups"
+	}
+	return "llog-backups"
 }
