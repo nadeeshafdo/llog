@@ -160,8 +160,8 @@ func (f *fakeGitHub) handler() http.Handler {
 	mux.HandleFunc("/repos/o/r/releases/latest", func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(f.hits, 1)
 		host := "http://" + r.Host
-		fmt.Fprintf(w, `{"tag_name":%q,"assets":[{"name":"llog-linux-amd64.tar.gz","browser_download_url":%q},{"name":"SHA256SUMS","browser_download_url":%q}]}`,
-			f.tag, host+"/llog-linux-amd64.tar.gz", host+"/SHA256SUMS")
+		fmt.Fprintf(w, `{"tag_name":%q,"assets":[{"name":"llog-linux-amd64.tar.gz","url":%q,"browser_download_url":%q},{"name":"SHA256SUMS","url":%q,"browser_download_url":%q}]}`,
+			f.tag, host+"/llog-linux-amd64.tar.gz", host+"/browser/llog-linux-amd64.tar.gz", host+"/SHA256SUMS", host+"/browser/SHA256SUMS")
 	})
 	mux.HandleFunc("/llog-linux-amd64.tar.gz", func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(f.hits, 1)
@@ -229,20 +229,23 @@ func TestPerformUpdateE2E(t *testing.T) {
 
 func TestPerformUpdateWithFileToken(t *testing.T) {
 	var gotAuth []string
+	var gotAccept []string
 	mux := http.NewServeMux()
 	var srv *httptest.Server
 	mux.HandleFunc("/repos/o/r/releases/latest", func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = append(gotAuth, r.Header.Get("Authorization"))
 		host := "http://" + r.Host
-		fmt.Fprintf(w, `{"tag_name":"v9.9.9","assets":[{"name":"llog-linux-amd64.tar.gz","browser_download_url":%q},{"name":"SHA256SUMS","browser_download_url":%q}]}`,
-			host+"/llog-linux-amd64.tar.gz", host+"/SHA256SUMS")
+		fmt.Fprintf(w, `{"tag_name":"v9.9.9","assets":[{"name":"llog-linux-amd64.tar.gz","url":%q,"browser_download_url":%q},{"name":"SHA256SUMS","url":%q,"browser_download_url":%q}]}`,
+			host+"/llog-linux-amd64.tar.gz", host+"/browser/llog-linux-amd64.tar.gz", host+"/SHA256SUMS", host+"/browser/SHA256SUMS")
 	})
 	asset := makeTarGz(t, "llog", []byte("updated-binary"))
 	mux.HandleFunc("/llog-linux-amd64.tar.gz", func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = append(gotAuth, r.Header.Get("Authorization"))
+		gotAccept = append(gotAccept, r.Header.Get("Accept"))
 		w.Write(asset)
 	})
 	mux.HandleFunc("/SHA256SUMS", func(w http.ResponseWriter, r *http.Request) {
+		gotAccept = append(gotAccept, r.Header.Get("Accept"))
 		fmt.Fprintf(w, "%x  llog-linux-amd64.tar.gz\n", sha256.Sum256(asset))
 	})
 	srv = httptest.NewServer(mux)
@@ -265,6 +268,14 @@ func TestPerformUpdateWithFileToken(t *testing.T) {
 		if h != "Bearer filetok" {
 			t.Fatalf("file token not sent correctly: %q", gotAuth)
 		}
+	}
+	for _, a := range gotAccept {
+		if a != "application/octet-stream" {
+			t.Fatalf("asset Accept must be octet-stream, got %q", gotAccept)
+		}
+	}
+	if len(gotAccept) != 2 {
+		t.Fatalf("expected 2 asset fetches with octet-stream, got %d", len(gotAccept))
 	}
 	if got, _ := os.ReadFile(installPath); string(got) != "updated-binary" {
 		t.Fatalf("installed = %q", got)

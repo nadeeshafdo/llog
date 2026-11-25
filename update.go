@@ -126,11 +126,23 @@ func requireHTTPS(raw string) error {
 }
 
 func getURL(client *http.Client, url, token string, maxBytes int64) ([]byte, error) {
+	return getWithAccept(client, url, token, "application/vnd.github+json", maxBytes)
+}
+
+// getAsset fetches a release file through the Releases API. Private repos
+// reject Bearer tokens on browser_download_url (github.com/.../download/...)
+// with 404, so assets must use the API asset `url` with
+// Accept: application/octet-stream, which 302-redirects to a signed URL.
+func getAsset(client *http.Client, url, token string, maxBytes int64) ([]byte, error) {
+	return getWithAccept(client, url, token, "application/octet-stream", maxBytes)
+}
+
+func getWithAccept(client *http.Client, url, token, accept string, maxBytes int64) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Accept", accept)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -169,7 +181,12 @@ func fetchLatest(client *http.Client, apiBase, owner, repo, token string) (relea
 		TagName string `json:"tag_name"`
 		Assets  []struct {
 			Name string `json:"name"`
-			URL  string `json:"browser_download_url"`
+			URL  string `json:"url"`
+			// BrowserURL is the github.com download link. It works without
+			// auth for public repos but 404s with Bearer tokens on private
+			// repos, so it is only a fallback when the API url is absent
+			// (old test fixtures).
+			BrowserURL string `json:"browser_download_url"`
 		} `json:"assets"`
 	}
 	if err := json.Unmarshal(data, &parsed); err != nil {
@@ -184,7 +201,11 @@ func fetchLatest(client *http.Client, apiBase, owner, repo, token string) (relea
 	}
 	rel.assets = make(map[string]string, len(parsed.Assets))
 	for _, a := range parsed.Assets {
-		rel.assets[a.Name] = a.URL
+		u := a.URL
+		if u == "" {
+			u = a.BrowserURL
+		}
+		rel.assets[a.Name] = u
 	}
 	return rel, nil
 }
@@ -423,11 +444,11 @@ func performUpdate(client *http.Client, apiBase, owner, repo, token, installPath
 	if err := requireHTTPS(sumsURL); err != nil {
 		return "", false, err
 	}
-	data, err := getURL(client, assetURL, token, maxAssetBytes)
+	data, err := getAsset(client, assetURL, token, maxAssetBytes)
 	if err != nil {
 		return "", false, err
 	}
-	sums, err := getURL(client, sumsURL, token, maxSumsBytes)
+	sums, err := getAsset(client, sumsURL, token, maxSumsBytes)
 	if err != nil {
 		return "", false, err
 	}
