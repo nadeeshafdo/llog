@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -19,8 +20,9 @@ const usage = `usage:
   llog "text"          append a one-line entry (any text not starting with -)
   llog -- "text"       append text starting with - literally
   llog -h              show this help
-  llog -v              show version
-  llog --update        update to the latest release (needs GH_TOKEN)
+  llog -v              show version (tag, commit, date)
+  llog --update        update to the latest release (needs token, see --config)
+  llog --config        save the GitHub token next to LOG.TXT (input hidden)
 
 keys while writing:
   Type to write; Left/Right/Home/End move the cursor anywhere
@@ -52,11 +54,20 @@ func run(args []string, in io.Reader, stdout, stderr io.Writer) error {
 		if len(args) > 1 {
 			return fmt.Errorf("flag --update takes no arguments (see llog -h)")
 		}
-		return runUpdate(stderr)
+		logPath := envOr("LLOG_FILE", defaultLogPath)
+		return runUpdate(stderr, authPathFor(logPath))
 	}
-	// Only four flags exist: -h, --help, -v, --version. Anything starting
-	// with - is a flag, so a typo can never silently become a journal
-	// entry. Use -- to journal text that starts with a dash.
+	if args[0] == "--config" {
+		if len(args) > 1 {
+			return fmt.Errorf("flag --config takes no arguments (see llog -h)")
+		}
+		logPath := envOr("LLOG_FILE", defaultLogPath)
+		return runConfig(in, stderr, authPathFor(logPath))
+	}
+	// Flag vocabulary is fixed: -h, --help, -v, --version, --update,
+	// --config. Anything else starting with - is rejected, so a typo
+	// can never silently become a journal entry. Use -- to journal text
+	// that starts with a dash.
 	if args[0] == "--" {
 		if len(args) < 2 {
 			return errors.New(`no entry text after "--" (see llog -h)`)
@@ -171,4 +182,9 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// authPathFor locates the token file in the same storage as the log.
+func authPathFor(logPath string) string {
+	return filepath.Join(filepath.Dir(logPath), "auth.json")
 }

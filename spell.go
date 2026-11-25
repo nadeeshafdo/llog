@@ -103,6 +103,10 @@ type spellChecker struct {
 }
 
 func defaultCustomPath() string {
+	return filepath.Join(configDir(), "words.txt")
+}
+
+func configDir() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		home, err := os.UserHomeDir()
@@ -111,7 +115,7 @@ func defaultCustomPath() string {
 		}
 		base = filepath.Join(home, ".config")
 	}
-	return filepath.Join(base, "llog", "words.txt")
+	return filepath.Join(base, "llog")
 }
 
 // loadChecker builds a spell checker from the system dictionary, the words

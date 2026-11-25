@@ -227,6 +227,49 @@ func TestPerformUpdateE2E(t *testing.T) {
 	}
 }
 
+func TestPerformUpdateWithFileToken(t *testing.T) {
+	var gotAuth []string
+	mux := http.NewServeMux()
+	var srv *httptest.Server
+	mux.HandleFunc("/repos/o/r/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = append(gotAuth, r.Header.Get("Authorization"))
+		host := "http://" + r.Host
+		fmt.Fprintf(w, `{"tag_name":"v9.9.9","assets":[{"name":"llog-linux-amd64.tar.gz","browser_download_url":%q},{"name":"SHA256SUMS","browser_download_url":%q}]}`,
+			host+"/llog-linux-amd64.tar.gz", host+"/SHA256SUMS")
+	})
+	asset := makeTarGz(t, "llog", []byte("updated-binary"))
+	mux.HandleFunc("/llog-linux-amd64.tar.gz", func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = append(gotAuth, r.Header.Get("Authorization"))
+		w.Write(asset)
+	})
+	mux.HandleFunc("/SHA256SUMS", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%x  llog-linux-amd64.tar.gz\n", sha256.Sum256(asset))
+	})
+	srv = httptest.NewServer(mux)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth.json")
+	if err := os.WriteFile(authPath, []byte(`{"github_token": "filetok"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	installPath := filepath.Join(dir, "llog")
+	if err := os.WriteFile(installPath, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tag, updated, err := performUpdate(updateClient(), srv.URL, "o", "r", fileToken(authPath), installPath, "v0.0.1")
+	if err != nil || !updated || tag != "v9.9.9" {
+		t.Fatalf("got tag=%q updated=%v err=%v", tag, updated, err)
+	}
+	for _, h := range gotAuth {
+		if h != "Bearer filetok" {
+			t.Fatalf("file token not sent correctly: %q", gotAuth)
+		}
+	}
+	if got, _ := os.ReadFile(installPath); string(got) != "updated-binary" {
+		t.Fatalf("installed = %q", got)
+	}
+}
 func TestPerformUpdateDenied(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
