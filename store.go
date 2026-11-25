@@ -49,7 +49,7 @@ func doAppend(logPath, backupDir, entry, expectHash string) (string, error) {
 	err := withLogLock(logPath, func() error {
 		cur, err := os.ReadFile(logPath)
 		if err != nil {
-			return fmt.Errorf("cannot read log (is the card mounted?): %w", err)
+			return fmt.Errorf("cannot read log (check LLOG_FILE path?): %w", err)
 		}
 		if len(cur) == 0 {
 			return errors.New("log file is empty, refusing to append")
@@ -91,7 +91,7 @@ func updateEntry(logPath, backupDir, expectHash string, index int, newText strin
 	err := withLogLock(logPath, func() error {
 		cur, err := os.ReadFile(logPath)
 		if err != nil {
-			return fmt.Errorf("cannot read log (is the card mounted?): %w", err)
+			return fmt.Errorf("cannot read log (check LLOG_FILE path?): %w", err)
 		}
 		if len(cur) == 0 {
 			return errors.New("log file is empty, refusing to edit")

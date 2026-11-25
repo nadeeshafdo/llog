@@ -227,7 +227,7 @@ func TestPerformUpdateE2E(t *testing.T) {
 	}
 }
 
-func TestPerformUpdateWithFileToken(t *testing.T) {
+func TestPerformUpdateWithEnvToken(t *testing.T) {
 	var gotAuth []string
 	var gotAccept []string
 	mux := http.NewServeMux()
@@ -252,21 +252,17 @@ func TestPerformUpdateWithFileToken(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	authPath := filepath.Join(dir, "auth.json")
-	if err := os.WriteFile(authPath, []byte(`{"github_token": "filetok"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	installPath := filepath.Join(dir, "llog")
 	if err := os.WriteFile(installPath, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	tag, updated, err := performUpdate(updateClient(), srv.URL, "o", "r", fileToken(authPath), installPath, "v0.0.1")
+	tag, updated, err := performUpdate(updateClient(), srv.URL, "o", "r", "envtok", installPath, "v0.0.1")
 	if err != nil || !updated || tag != "v9.9.9" {
 		t.Fatalf("got tag=%q updated=%v err=%v", tag, updated, err)
 	}
 	for _, h := range gotAuth {
-		if h != "Bearer filetok" {
-			t.Fatalf("file token not sent correctly: %q", gotAuth)
+		if h != "Bearer envtok" {
+			t.Fatalf("env token not sent correctly: %q", gotAuth)
 		}
 	}
 	for _, a := range gotAccept {

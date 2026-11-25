@@ -305,73 +305,49 @@ func mustRead(t *testing.T, path string) string {
 	return string(b)
 }
 
-func TestRunConfigWritesToken(t *testing.T) {
+func TestRunConfigGuidesWithoutFile(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "LOG.TXT")
 	mustWrite(t, logPath, "start\n")
 	t.Setenv("LLOG_FILE", logPath)
-	t.Setenv("GH_TOKEN", "")
-	t.Setenv("GITHUB_TOKEN", "")
 
 	var stdout, stderr bytes.Buffer
-	if err := run([]string{"--config"}, strings.NewReader("tok123\n"), &stdout, &stderr); err != nil {
+	if err := run([]string{"--config"}, strings.NewReader(""), &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
-	authPath := filepath.Join(dir, "auth.json")
-	if githubToken(authPath) != "tok123" {
-		t.Fatalf("stored token not readable: %q", mustRead(t, authPath))
+	if !strings.Contains(stderr.String(), "gh auth login") {
+		t.Fatalf("--config should point at gh auth, got %q", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "auth.json")); !os.IsNotExist(err) {
+		t.Fatal("--config must not create a token file")
 	}
 	if got := mustRead(t, logPath); got != "start\n" {
 		t.Fatalf("config must not touch the log: %q", got)
 	}
 }
 
-func TestRunConfigEmptyAborts(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "LOG.TXT")
-	mustWrite(t, logPath, "start\n")
-	t.Setenv("LLOG_FILE", logPath)
-
-	var stdout, stderr bytes.Buffer
-	if err := run([]string{"--config"}, strings.NewReader("\n"), &stdout, &stderr); err == nil {
-		t.Fatal("empty token should fail")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "auth.json")); !os.IsNotExist(err) {
-		t.Fatal("empty token must not create a file")
-	}
-}
-
 func TestGithubTokenPrefersEnv(t *testing.T) {
-	dir := t.TempDir()
-	authPath := filepath.Join(dir, "auth.json")
-	if err := os.WriteFile(authPath, []byte(`{"github_token": "filetok"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := githubToken(authPath); got != "filetok" {
-		t.Fatalf("file token = %q", got)
-	}
+	t.Setenv("LLOG_NO_GH_AUTH", "1")
 	t.Setenv("GH_TOKEN", "envtok")
-	if got := githubToken(authPath); got != "envtok" {
-		t.Fatalf("env should win, got %q", got)
+	t.Setenv("GITHUB_TOKEN", "fallbacktok")
+	if got := githubToken(); got != "envtok" {
+		t.Fatalf("GH_TOKEN should win, got %q", got)
 	}
-	if got := githubToken(filepath.Join(dir, "missing.json")); got != "envtok" {
-		t.Fatalf("missing file with env set = %q", got)
+	t.Setenv("GH_TOKEN", "")
+	if got := githubToken(); got != "fallbacktok" {
+		t.Fatalf("GITHUB_TOKEN should be next, got %q", got)
+	}
+	t.Setenv("GH_TOKEN", "  spaced  ")
+	if got := githubToken(); got != "spaced" {
+		t.Fatalf("token should be trimmed, got %q", got)
 	}
 }
 
-func TestFileTokenRejectsGarbage(t *testing.T) {
-	if got := fileToken(""); got != "" {
-		t.Fatalf("empty path gave %q", got)
-	}
-	if got := fileToken(filepath.Join(t.TempDir(), "nope.json")); got != "" {
-		t.Fatalf("missing file gave %q", got)
-	}
-	dir := t.TempDir()
-	p := filepath.Join(dir, "auth.json")
-	if err := os.WriteFile(p, []byte("not json"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := fileToken(p); got != "" {
-		t.Fatalf("garbage gave %q", got)
+func TestGithubTokenEmptyWithoutSources(t *testing.T) {
+	t.Setenv("LLOG_NO_GH_AUTH", "1")
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	if got := githubToken(); got != "" {
+		t.Fatalf("no sources should give empty, got %q", got)
 	}
 }

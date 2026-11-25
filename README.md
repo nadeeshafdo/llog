@@ -1,6 +1,6 @@
 # llog
 
-A personal life-log CLI for one encrypted SD card and one plain-text file.
+A personal life-log CLI for one plain-text file.
 `llog` appends timestamped entries to `LOG.TXT`. History is never silently
 rewritten: the only way to change an old entry is an explicit Ctrl+E edit,
 which is backup-first and byte-verified. It never syncs anywhere, and
@@ -37,10 +37,9 @@ and self-update declines Windows too.)
 SHA256 checksum before extracting anything, keeps your current binary as
 `llog.bak`, and atomically swaps in the new one. A dev build (no tag in
 its version) always counts as behind, so it updates too. It needs a
-token: set `GH_TOKEN` (or `GITHUB_TOKEN`) with `repo` scope, or run
-`llog --config` once to store one in `auth.json` beside `LOG.TXT`
-(the card is LUKS-encrypted; that encryption is the protection, as the
-card filesystem ignores Unix permission bits). Nothing else on your
+token: set `GH_TOKEN` (or `GITHUB_TOKEN`), or log in with
+`gh auth login` (llog reads the `gh` keyring token and never writes
+a token file). Nothing else on your
 machine, and never your log file, is touched by an update. On Windows
 self-update is not supported yet.
 
@@ -71,7 +70,7 @@ the prompt.
 
 The log file is append-only by default and every write is guarded:
 
-- The tool never creates `LOG.TXT`. If the card is not mounted, it refuses
+- The tool never creates `LOG.TXT`. If the path is not available, it refuses
   instead of writing to the wrong disk.
 - Before each write it takes a full, hash-verified backup.
 - It records the file fingerprint at startup and refuses the write if the
@@ -87,8 +86,8 @@ The log file is append-only by default and every write is guarded:
 
 | Variable           | Meaning                                             |
 | ------------------ | --------------------------------------------------- |
-| `LLOG_FILE`        | Path to `LOG.TXT` (default `/media/nadeeshafdo/nadeeshafdo/LOG.TXT`) |
-| `LLOG_BACKUP_DIR`  | Backup folder (default `.../nadeeshafdo/llog-backups`) |
+| `LLOG_FILE`        | Path to `LOG.TXT` (default `~/LOG.TXT`, set this to your log) |
+| `LLOG_BACKUP_DIR`  | Backup folder (default `~/llog-backups`) |
 | `LLOG_DICT`        | Spell dictionary path (default: system hunspell)    |
 | `LLOG_AUTOCORRECT` | Set to `0` to disable autocorrect (underline stays) |
 | `NO_COLOR` / `LLOG_NO_COLOR` | Set to disable red underline colors      |
@@ -110,3 +109,7 @@ Layout: `main.go` (commands), `tui.go` (Bubble Tea prompt), `store.go`
 `entry.go` (header/body builders), `input.go` (pipe fallback vs prompt),
 `spell.go` (dictionary, check, suggest, autocorrect), `llog_TUI.drawio`
 (screen designs for the prompt).
+
+## License
+
+MIT, see [LICENSE](LICENSE).
