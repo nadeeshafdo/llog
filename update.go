@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
@@ -19,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/term"
 )
 
 const (
@@ -46,11 +49,36 @@ type releaseInfo struct {
 	assets map[string]string // asset name -> download URL
 }
 
-func githubToken() string {
+// githubToken prefers the env, then falls back to the token file that
+// lives beside the log (auth.json). Env always wins for scripting.
+func githubToken(authPath string) string {
 	if t := os.Getenv("GH_TOKEN"); t != "" {
 		return t
 	}
-	return os.Getenv("GITHUB_TOKEN")
+	if t := os.Getenv("GITHUB_TOKEN"); t != "" {
+		return t
+	}
+	return fileToken(authPath)
+}
+
+// fileToken reads {"github_token": "..."} from path. The card holding the
+// log is LUKS-encrypted, which is the real protection; file bits are set
+// best-effort on write but cannot be relied on (exFAT ignores them).
+func fileToken(path string) string {
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var parsed struct {
+		GitHubToken string `json:"github_token"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(parsed.GitHubToken)
 }
 
 func updateClient() *http.Client {
@@ -464,7 +492,7 @@ func replaceBinary(path string, data []byte) error {
 }
 
 // runUpdate performs a self-update of the running binary.
-func runUpdate(out io.Writer) error {
+func runUpdate(out io.Writer, authPath string) error {
 	if runtime.GOOS == "windows" {
 		return errors.New("self-update on Windows is not supported yet")
 	}
@@ -484,7 +512,7 @@ func runUpdate(out io.Writer) error {
 	if cur == "" {
 		cur = "dev"
 	}
-	tag, updated, err := performUpdate(updateClient(), "https://api.github.com", updateOwner, updateRepo, githubToken(), exe, cur)
+	tag, updated, err := performUpdate(updateClient(), "https://api.github.com", updateOwner, updateRepo, githubToken(authPath), exe, cur)
 	if err != nil {
 		return err
 	}
@@ -494,4 +522,45 @@ func runUpdate(out io.Writer) error {
 	}
 	fmt.Fprintf(out, "updated llog %s -> %s\n", cur, tag)
 	return nil
+}
+
+// runConfig stores the GitHub token beside the log file for --update to
+// use. The token is read without echo when stdin is a terminal.
+func runConfig(in io.Reader, out io.Writer, authPath string) error {
+	fmt.Fprint(out, "GitHub token (input hidden, Enter to save): ")
+	secret, err := readSecretLine(in)
+	fmt.Fprintln(out)
+	if err != nil {
+		return err
+	}
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		return errors.New("empty token, nothing written")
+	}
+	if dir := filepath.Dir(authPath); dir != "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return fmt.Errorf("cannot create config dir: %w", err)
+		}
+	}
+	data := []byte("{\"github_token\": " + strconv.Quote(secret) + "}\n")
+	if err := writeSynced(authPath, data, os.O_WRONLY|os.O_CREATE|os.O_TRUNC); err != nil {
+		return fmt.Errorf("cannot write token: %w", err)
+	}
+	_ = os.Chmod(authPath, 0o600) // best effort; exFAT ignores bits anyway
+	fmt.Fprintf(out, "saved token to %s\n", authPath)
+	return nil
+}
+
+// readSecretLine reads one line, without echo when stdin is a terminal.
+func readSecretLine(in io.Reader) (string, error) {
+	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		line, err := term.ReadPassword(int(f.Fd()))
+		return string(line), err
+	}
+	r := bufio.NewReader(in)
+	line, err := r.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return strings.TrimSuffix(line, "\n"), nil
 }
