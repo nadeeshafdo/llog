@@ -30,7 +30,9 @@ llog --update        # update to the latest release (needs GH_TOKEN)
 ## Updating
 
 Releases live on the [releases page](https://github.com/nadeeshafdo/llog/releases),
-built automatically for Linux, macOS and Windows when a `v*` tag is pushed.
+built automatically for Linux and macOS when a `v*` tag is pushed.
+(Windows builds are skipped: the file lock uses Linux/macOS-only syscalls,
+and self-update declines Windows too.)
 `llog --update` fetches the newest release for your platform, verifies its
 SHA256 checksum before extracting anything, keeps your current binary as
 `llog.bak`, and atomically swaps in the new one. A dev build (no tag in
